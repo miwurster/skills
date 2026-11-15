@@ -1,7 +1,22 @@
-# AGENTS.md
-
 General-purpose skills under `skills/`, installed with `npx skills`, and plugins under `plugins/`, copied into a project by `./sync`.
 Everything here is public: keep employer, customer and private names out of skills, plugins and test data.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub issues in `miwurster/skills`, via `gh`.
+To file, read, claim, label or close an issue, follow `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels, each equal to its role name.
+To apply or read one, follow `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root.
+Before naming a domain concept or changing what an ADR decides, follow `docs/agents/domain.md`.
 
 ## Changing a plugin
 
