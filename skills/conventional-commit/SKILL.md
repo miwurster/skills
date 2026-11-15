@@ -10,7 +10,7 @@ Every gate below resolves from the diff, the branch and the task context, with a
 
 ## Process
 
-Open with **one batch** of parallel tool calls: `git diff --staged`, `git diff`, `git status`, the branch name, and `docs/agents/issue-tracker.md` (for the scope).
+Open with **one batch** of parallel tool calls: `git diff --staged`, `git diff`, `git status`, the branch name, and the repo's `AGENTS.md` or `CLAUDE.md` (for the scope: the issue-tracker doc it points at).
 
 1. **Read the changes**: the staged diff, or the working-tree diff and status if nothing is staged.
    The diff decides the summary.
@@ -46,7 +46,7 @@ It is optional: a subject without a ticket has no scope, and its type stands as 
 Take the first hit, in this order:
 
 1. A reference given in the task context this run.
-2. The branch name, when `docs/agents/issue-tracker.md` names a tracker:
+2. The branch name, when the issue-tracker doc names a tracker:
    - **Jira**: `<KEY>-<number>`, the project key from that doc.
    - **GitHub / GitLab**: a leading `<number>-` segment, written as `#<number>`.
 3. Nothing found: no scope.
