@@ -1,5 +1,7 @@
-General-purpose skills under `skills/`, installed with `npx skills`, and plugins under `plugins/`, copied into a project by `./sync`.
-Everything here is public: keep employer, customer and private names out of skills, plugins and test data.
+## Public repo
+
+Everything here is public.
+Use generic names in skills, plugins and test data, never an employer's, customer's or private one.
 
 ## Agent skills
 
