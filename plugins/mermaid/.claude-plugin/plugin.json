@@ -1,0 +1,6 @@
+{
+  "name": "mermaid",
+  "description": "A mod that draws each mermaid block in an assistant reply as box-drawing text, with a pane for diagrams too wide for the window.",
+  "version": "1.0.0",
+  "author": { "name": "Michael Wurster" }
+}

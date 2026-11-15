@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Copies plugins from this repo into a home repo, where Claude Code loads each
+# one in place from .claude/skills/<plugin>/, with no marketplace or install.
+#   ./sync <home-repo> <plugin>...     e.g. ./sync ~/work/personal/home-hq command-guard mermaid
+# Copies only what runs: tests stay here. Records the source commit in
+# <plugin>/SOURCE, so an update shows up as a diff in the home repo.
+set -euo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+home="${1:?usage: ./sync <home-repo> <plugin>...}"
+shift
+[ $# -gt 0 ] || { echo "usage: ./sync <home-repo> <plugin>..." >&2; exit 1; }
+[ -d "$home/.git" ] || { echo "not a git repo: $home" >&2; exit 1; }
+
+if [ -n "$(git -C "$here" status --porcelain -- plugins)" ]; then
+  echo "plugins/ has uncommitted changes; commit them first, so SOURCE names what was copied" >&2
+  exit 1
+fi
+sha="$(git -C "$here" rev-parse HEAD)"
+
+for plugin in "$@"; do
+  src="$here/plugins/$plugin"
+  [ -f "$src/.claude-plugin/plugin.json" ] || { echo "no such plugin: $plugin" >&2; exit 1; }
+  dest="$home/.claude/skills/$plugin"
+  mkdir -p "$dest"
+  rsync -a --delete --exclude '*.test.ts' --exclude '*.test.tsx' --exclude 'test-*.sh' --exclude SOURCE "$src/" "$dest/"
+  printf 'https://github.com/miwurster/skills/tree/%s/plugins/%s\n' "$sha" "$plugin" > "$dest/SOURCE"
+  echo "synced $plugin -> $dest"
+done

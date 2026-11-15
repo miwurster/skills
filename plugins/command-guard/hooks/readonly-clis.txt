@@ -1,0 +1,65 @@
+# command guard — read allowlist for guarded CLIs.
+# A guarded CLI is any CLI that leads a line here: it mutates live infrastructure,
+# so only the named reads pass. A new one also goes into FALLBACK_CLIS in
+# deny-dangerous.sh, and test-guard.sh fails until it does.
+# A forge CLI (gh, glab) is not guarded: a merge request is reversible and
+# reviewable, so it stays on the denylist in dangerous-patterns.txt instead.
+# psql is absent on purpose: SQL mutation hides in a string, a file or a session,
+# so the answer is a read-only database role, not a regex.
+# Format: <cli> <POSIX-ERE regex>, one per line. Blank lines and # comments are ignored.
+# The regex is matched against the command's arguments with leading flags (and
+# their values) removed, so "kubectl -n prod get pods" matches "^get".
+# Deny by default: an argument list that matches no line for its CLI is blocked.
+# After any edit run ./test-guard.sh — it must end "failed: 0".
+
+# kubectl — cluster reads. exec, cp, attach, port-forward, proxy and edit are
+# absent on purpose: they read like reads but hand over mutation.
+kubectl ^(get|describe|logs|events|top|explain|api-resources|api-versions|cluster-info|version|diff)([[:space:]]|$)
+kubectl ^config[[:space:]]+(view|current-context|get-contexts)([[:space:]]|$)
+kubectl ^auth[[:space:]]+can-i([[:space:]]|$)
+kubectl ^rollout[[:space:]]+(status|history)([[:space:]]|$)
+
+# gcloud — the verb trails the group path: gcloud compute instances list.
+# print-access-token and compute ssh are not reads and match nothing here.
+# list-* covers the list variants (list-errors, list-instance-details).
+gcloud ^([a-z0-9-]+[[:space:]]+)*(list(-[a-z-]+)?|describe|get-iam-policy|version|info)([[:space:]]|$)
+gcloud ^([a-z0-9-]+[[:space:]]+)*get-[a-z-]+([[:space:]]|$)
+gcloud ^logging[[:space:]]+read([[:space:]]|$)
+gcloud ^builds[[:space:]]+log([[:space:]]|$)
+gcloud ^storage[[:space:]]+(ls|cat|du)([[:space:]]|$)
+gcloud (^|[[:space:]])--help([[:space:]]|$)
+
+# terraform / terragrunt — init is allowed because plan is useless without it,
+# and it writes only .terraform/. It is the weakest entry here: it downloads and
+# executes provider and module code. state rm/mv/push and import are not reads.
+# fmt is allowed although it writes: it only rewrites local .tf files, never an env.
+terraform ^(plan|show|output|validate|providers|version|init)([[:space:]]|$)
+terraform ^state[[:space:]]+(list|show|pull)([[:space:]]|$)
+terraform ^fmt([[:space:]]|$)
+terragrunt ^(plan|show|output|validate|providers|version|init)([[:space:]]|$)
+terragrunt ^state[[:space:]]+(list|show|pull)([[:space:]]|$)
+terragrunt ^fmt([[:space:]]|$)
+
+# helm — install, upgrade, uninstall and rollback are not reads.
+# dependency build and update are allowed because template is useless on an
+# umbrella chart without them, and they write only its charts/ and Chart.lock.
+# repo update and pull fetch the same way: a refreshed index, a chart on disk.
+# repo add stays out: it changes where every later fetch resolves from.
+helm ^(list|get|status|history|show|version|search|template|lint)([[:space:]]|$)
+helm ^dep(endency)?[[:space:]]+(build|update|list)([[:space:]]|$)
+helm ^repo[[:space:]]+(list|update)([[:space:]]|$)
+helm ^pull([[:space:]]|$)
+
+# aws — aws <service> <verb>: the verb prefix is the read, across every service.
+# Reads that yield a credential (get-secret-value, get-login-password, get-token)
+# match here but are denied first by group 12 of dangerous-patterns.txt.
+# s3 cp/sync/mv are absent: only argument order tells a download from an upload.
+aws ^$
+aws ^[a-z0-9-]+[[:space:]]+(describe|list|get|head|batch-get)-[a-z0-9-]+([[:space:]]|$)
+aws ^[a-z0-9-]+[[:space:]]+wait[[:space:]]
+aws ^s3[[:space:]]+ls([[:space:]]|$)
+aws ^logs[[:space:]]+(tail|filter-log-events)([[:space:]]|$)
+aws ^cloudtrail[[:space:]]+lookup-events([[:space:]]|$)
+aws ^dynamodb[[:space:]]+(scan|query)([[:space:]]|$)
+aws ^configure[[:space:]]+list([[:space:]]|$)
+aws ^([a-z0-9-]+[[:space:]]+){0,2}help([[:space:]]|$)
