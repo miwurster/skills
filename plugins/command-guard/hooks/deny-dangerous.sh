@@ -222,7 +222,7 @@ if [ -r "$PATTERNS_FILE" ]; then
   while IFS= read -r pattern; do
     case "$pattern" in ''|\#*) continue ;; esac
     if printf '%s\n' "$DENY_CMD" | grep -qE -- "$pattern" 2>/dev/null; then
-      deny "Blocked by the command guard (hooks/dangerous-patterns.txt). Matched pattern: $pattern."
+      deny "Blocked by the command guard (plugins/command-guard/hooks/dangerous-patterns.txt in miwurster/skills). Matched pattern: $pattern."
     fi
   done < "$PATTERNS_FILE"
 fi
@@ -260,7 +260,7 @@ while IFS= read -r segment; do
     [ "$command" = "$cli" ] || continue
 
     [ -r "$ALLOW_FILE" ] ||
-      deny "Blocked by the command guard: the read allowlist (hooks/readonly-clis.txt) is unreadable, so every $cli command is denied."
+      deny "Blocked by the command guard: the read allowlist ($ALLOW_FILE) is unreadable, so every $cli command is denied."
 
     args=$(strip_flags "${segment#*$cli}")
     allowed=0
@@ -272,7 +272,7 @@ while IFS= read -r segment; do
     done < "$ALLOW_FILE"
 
     [ "$allowed" = 1 ] ||
-      deny "Blocked by the command guard: only reads are allowed for $cli, and '$cli $args' is not one of them (hooks/readonly-clis.txt). If this really is a read, the fix is one line in that file plus a case in test-guard.sh, made in miwurster/skills and synced here."
+      deny "Blocked by the command guard: only reads are allowed for $cli, and '$cli $args' is not one of them (plugins/command-guard/hooks/readonly-clis.txt in miwurster/skills). If this really is a read, the fix is one line in that file plus a case in test-guard.sh, made there and synced here."
   done
 done <<SEGMENTS
 $(segments "$CMD")
