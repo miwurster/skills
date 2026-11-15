@@ -1,7 +1,6 @@
-## Public repo
+## Naming
 
-Everything here is public.
-Use generic names in skills, plugins and test data, never an employer's, customer's or private one.
+Everything here is public, so use generic names in skills, plugins and test data, never an employer's, customer's or private one.
 
 ## Agent skills
 
