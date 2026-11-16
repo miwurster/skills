@@ -29,14 +29,16 @@ The release column is what `semantic-release` bumps for that type.
 | `perf`     | performance improvement        | **patch** |
 | `refactor` | code change, no feature or fix | none      |
 | `docs`     | documentation only             | none      |
+| `style`    | formatting only, same meaning  | none      |
 | `test`     | add or correct tests           | none      |
 | `build`    | build system or dependencies   | none      |
 | `ci`       | CI config and scripts          | none      |
 | `chore`    | no src or test change          | none      |
+| `revert`   | undo an earlier commit         | **patch** |
 
 - The invocation names a type (a bare `feat`, `fix`, … or a `--feat`, `--fix`, … flag from the table): use it verbatim.
 - The user wants to **cut a release** ("cut a release", "ship a new version", or a clear equivalent): `feat` for a new capability, `perf` for a speedup, `fix` for everything else.
-- Otherwise: the type that matches the change, whatever bump it causes.
+- Otherwise: the type from the table that matches the change, whatever bump it causes.
 
 ## Scope
 
@@ -74,6 +76,7 @@ Subject:
 Body, wrapped at 72 chars, bullets as `-`:
 
 - Write one for a non-obvious *why*, and always for a breaking change, a security fix or a data migration.
+- Always for a `revert`: `This reverts commit <sha>.`, the line `semantic-release` reads to detect the revert.
 - Leave it out when the subject speaks for itself.
 
 The ticket lives in the scope alone; the one footer this skill writes is `BREAKING CHANGE:`.
