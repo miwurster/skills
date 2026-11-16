@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
-# Copies plugins from this repo into a home repo, where Claude Code loads each
-# one in place from .claude/skills/<plugin>/, with no marketplace or install.
-#   ./sync <home-repo> <plugin>...     e.g. ./sync ~/work/personal/home-hq command-guard mermaid
+# Copies plugins from this repo to where Claude Code loads each one in place
+# from skills/<plugin>/, with no marketplace or install:
+#   ./sync <home-repo> <plugin>...   into <home-repo>/.claude/skills/, e.g. ./sync ~/work/personal/home-hq command-guard mermaid
+#   ./sync --user <plugin>...        into ${CLAUDE_CONFIG_DIR:-~/.claude}/skills/, for every session of yours
 # Copies only what runs: tests stay here. Records the source commit in
 # <plugin>/SOURCE, so an update shows up as a diff in the home repo.
 set -euo pipefail
 
+usage="usage: ./sync <home-repo> <plugin>... | ./sync --user <plugin>..."
 here="$(cd "$(dirname "$0")" && pwd)"
-home="${1:?usage: ./sync <home-repo> <plugin>...}"
+target="${1:?$usage}"
 shift
-[ $# -gt 0 ] || { echo "usage: ./sync <home-repo> <plugin>..." >&2; exit 1; }
-[ -d "$home/.git" ] || { echo "not a git repo: $home" >&2; exit 1; }
+[ $# -gt 0 ] || { echo "$usage" >&2; exit 1; }
+
+if [ "$target" = "--user" ]; then
+  skills="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills"
+else
+  [ -d "$target/.git" ] || { echo "not a git repo: $target" >&2; exit 1; }
+  skills="$target/.claude/skills"
+fi
 
 if [ -n "$(git -C "$here" status --porcelain -- plugins)" ]; then
   echo "plugins/ has uncommitted changes; commit them first, so SOURCE names what was copied" >&2
@@ -21,7 +29,7 @@ sha="$(git -C "$here" rev-parse HEAD)"
 for plugin in "$@"; do
   src="$here/plugins/$plugin"
   [ -f "$src/.claude-plugin/plugin.json" ] || { echo "no such plugin: $plugin" >&2; exit 1; }
-  dest="$home/.claude/skills/$plugin"
+  dest="$skills/$plugin"
   mkdir -p "$dest"
   rsync -a --delete --exclude '*.test.ts' --exclude '*.test.tsx' --exclude 'test-*.sh' --exclude SOURCE "$src/" "$dest/"
   printf 'https://github.com/miwurster/skills/tree/%s/plugins/%s\n' "$sha" "$plugin" > "$dest/SOURCE"

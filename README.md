@@ -40,15 +40,24 @@ The button opens the diagram in a pane, where `h` and `l` pan.
 
 ### Install
 
-Claude Code loads a plugin committed under a project's `.claude/skills/<plugin>/` in place, with no marketplace and no install.
-`sync` copies it there:
+Claude Code loads a plugin from a `skills/<plugin>/` folder in place, with no marketplace and no install.
+`sync` copies it there, from a clone of this repo.
+It copies the files the plugin runs, leaves the tests here, and writes the source commit into `<plugin>/SOURCE`.
+
+For one project, into its `.claude/skills/`; commit the result there:
 
 ```sh
 ./sync ../my-project command-guard mermaid
 ```
 
-It copies the files the plugin runs, leaves the tests here, and writes the source commit into `<plugin>/SOURCE`.
-Commit the result in the target repo.
+For yourself, in every session, into `~/.claude/skills/`, or `$CLAUDE_CONFIG_DIR/skills/` when that is set:
+
+```sh
+./sync --user command-guard mermaid
+```
+
+To update, pull this repo and run the same command again; then restart Claude Code.
+To uninstall, delete the plugin's folder.
 
 ## Tests
 
