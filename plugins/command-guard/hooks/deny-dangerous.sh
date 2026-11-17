@@ -88,8 +88,13 @@ strip_flags() {
 # The command a segment actually runs: leading VAR=val, flags and prefix runners
 # (sudo, timeout, watch) skipped, path stripped, so /usr/local/bin/kubectl is kubectl.
 command_of() {
-  local tok skip=0
+  local tok skip=0 prev=""
   for tok in $1; do
+    # command -v/-V looks names up in PATH and runs none of them.
+    if [ "$prev" = command ]; then
+      case "$tok" in -[!-]*[vV]*|-[vV]*) return ;; esac
+    fi
+    prev=$tok
     if [ "$skip" = 1 ]; then skip=0; continue; fi
     case "$tok" in
       -*)
