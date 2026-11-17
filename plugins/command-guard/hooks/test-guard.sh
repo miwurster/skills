@@ -450,6 +450,17 @@ check allow 'python3 -c "print(1)"'
 check allow 'echo "${HOME}" && ls "${PWD}"'
 check allow 'pnpm node-gyp rebuild && node dist/main.js < input.txt'
 
+# ---- polling a background task's output file: the harness notifies instead ----
+check block "timeout 175 bash -c 'until grep -qE \"^verify=\" /tmp/claude-1000/-home-me-proj/0b1c2d3e/tasks/b54b82yur.output; do sleep 10; done'; cat /tmp/claude-1000/-home-me-proj/0b1c2d3e/tasks/b54b82yur.output"
+check block "F=/tmp/claude-1000/-home-me-proj/0b1c2d3e/tasks/btn7snf50.output; until grep -q 'exit=' \$F; do sleep 5; done; cat \$F"
+check block 'while ! grep -q done /private/tmp/claude-502/-Users-me-proj/abc/tasks/bx1.output; do sleep 2; done'
+check block 'while true; do tail -1 /tmp/claude-1000/p/s/tasks/b1.output; sleep 30; done'
+check allow 'until curl -s localhost:8080/health; do sleep 1; done'
+check allow 'while ! nc -z localhost 5432; do sleep 1; done'
+check allow 'cat /tmp/claude-1000/-home-me-proj/0b1c2d3e/tasks/b54b82yur.output'
+check allow 'tail -50 /tmp/claude-1000/-home-me-proj/0b1c2d3e/tasks/b54b82yur.output'
+check allow 'grep -E "^verify=" /private/tmp/claude-502/-Users-me-proj/abc/tasks/bx1.output'
+
 # ---- unguarded commands stay untouched ----
 check allow 'npm run verify'
 check allow 'grep -rn "kubectl" docs/'

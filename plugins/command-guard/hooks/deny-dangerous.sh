@@ -13,6 +13,8 @@
 #                      zsh-only expansion), which would otherwise wait on a
 #                      permission prompt, in bypass mode too, for hours in an
 #                      unattended run. The deny tells the agent how to rewrite it.
+# Plus one habit check: a sleep loop polling a background task's output file is
+# denied, since Claude Code notifies the agent when that task finishes.
 #
 # Wired by hooks.json as PreToolUse, matcher Bash. Deny = exit 2 + reason on
 # stderr, which Claude Code shows the agent and blocks the call.
@@ -231,6 +233,24 @@ if [ -r "$PATTERNS_FILE" ]; then
     fi
   done < "$PATTERNS_FILE"
 fi
+
+# --- polling a background task: the harness already notifies on completion ---
+# An until/while loop that sleeps, in a command naming a Claude Code background
+# task's output file (<claude temp dir>/…/tasks/<id>.output), directly or via a
+# variable set in the same command. A one-shot cat or tail of the file passes.
+TASK_OUTPUT_RE='/claude-[^/[:space:]]*/([^[:space:]]*/)?tasks/[A-Za-z0-9_-]+\.output'
+POLL_LOOP_RE='(^|[^A-Za-z0-9_.-])(until|while)[[:space:]]'
+SLEEP_RE='(^|[^A-Za-z0-9_.-])sleep[[:space:]]'
+case "$CMD" in
+  *tasks/*.output*)
+    POLL_CMD=$(strip_heredocs "$CMD" "$WRAPPERS")
+    if printf '%s\n' "$POLL_CMD" | grep -qE -- "$TASK_OUTPUT_RE" &&
+       printf '%s\n' "$POLL_CMD" | grep -qE -- "$POLL_LOOP_RE" &&
+       printf '%s\n' "$POLL_CMD" | grep -qE -- "$SLEEP_RE"; then
+      echo "Blocked by the command guard: this loop polls a background task's output file. The task notifies you when it finishes; wait for that notification, then read the output file once." >&2
+      exit 2
+    fi ;;
+esac
 
 # --- stage 3: uncheckable, matched against the command minus data heredocs ---
 # Checked before stage 2 runs, but after the denylist, so an irreversible
