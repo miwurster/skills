@@ -1,13 +1,18 @@
+## Verification checks
+
+Run these checks in order before you report a change to a plugin as done:
+
+1. `bash plugins/command-guard/hooks/test-guard.sh`, which must end `failed: 0`
+2. `claude plugin test plugins/mermaid`
+
 ## Naming
 
 Everything here is public, so use generic names in skills, plugins and test data, never an employer's, customer's or private one.
 
 ## Changing a plugin
 
-- `command-guard`: run `bash plugins/command-guard/hooks/test-guard.sh` after any edit; it must end `failed: 0`.
-  A read the guard wrongly blocks is one line in `readonly-clis.txt` plus a `check allow` case, and a `check block` case for the nearest mutation.
-- `mermaid`: run `claude plugin test plugins/mermaid`.
-  To update the renderer, follow the header of `plugins/mermaid/hooks/vendor/grok-mermaid.js`.
+- `command-guard`: a read the guard wrongly blocks is one line in `readonly-clis.txt` plus a `check allow` case, and a `check block` case for the nearest mutation.
+- `mermaid`: to update the renderer, follow the header of `plugins/mermaid/hooks/vendor/grok-mermaid.js`.
 - Raise the plugin's `version` in `.claude-plugin/plugin.json` once per push that changes it.
 
 ## Vendored material
