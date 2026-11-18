@@ -15,6 +15,8 @@
 #                      unattended run. The deny tells the agent how to rewrite it.
 # Plus one habit check: a sleep loop polling a background task's output file is
 # denied, since Claude Code notifies the agent when that task finishes.
+# A shell script the command runs (bash x.sh, ./x.sh, source x.sh) goes through
+# models 1 and 2 as well, read from disk, scripts it runs in turn included.
 #
 # Wired by hooks.json as PreToolUse, matcher Bash. Deny = exit 2 + reason on
 # stderr, which Claude Code shows the agent and blocks the call.
@@ -50,8 +52,20 @@ INTERPRETERS=" python python3 node ruby perl php osascript deno bun "
 INTERP_RE='(python3?|node|ruby|perl|php|deno|bun|osascript)'
 UNCHECKABLE="(^|[^A-Za-z0-9_.-])$INTERP_RE([[:space:]][^;&|]*)?<<|<<[^;&]*\|[[:space:]]*([^[:space:]]*/)?$INTERP_RE([[:space:]]|$)|\\\$\\{\\([^)]*\\)|\\\$=[A-Za-z_{]"
 
-# Commands that merely prefix the real one, so the guarded CLI is still visible.
-PREFIX_RUNNERS=" sudo env command time nice ionice stdbuf timeout watch "
+# Commands and shell keywords that merely prefix the real one, so the guarded
+# CLI is still visible: "do kubectl delete pod" in a for loop runs kubectl.
+PREFIX_RUNNERS=" sudo env command exec time nice ionice stdbuf timeout watch
+if then else elif while until do ! { "
+PREFIX_RUNNERS=" $(printf '%s ' $PREFIX_RUNNERS)"
+
+# Shells that run a script file named as their first argument.
+SCRIPT_SHELLS=" bash sh zsh dash ksh "
+
+# How deep a script that runs a script is followed before the guard stops looking.
+MAX_SCRIPT_DEPTH=4
+SCRIPT_DEPTH=${GUARD_SCRIPT_DEPTH:-0}
+# The largest script file the guard reads, in bytes; a larger one runs unread.
+MAX_SCRIPT_BYTES=262144
 
 # Flags taking a separate value, so the token after them is not a verb.
 VALUE_FLAGS=" -n --namespace --context --kubeconfig --cluster --user -o --output
@@ -194,6 +208,94 @@ dependabot_delete() {
   [ "$deletes" = 1 ] && [ "$refs" -gt 0 ]
 }
 
+# The script file a segment runs, as "<kind> <path>": "arg" for bash x.sh,
+# sh x.sh, source x.sh and . x.sh, "exec" for ./x.sh or any other path run
+# directly. Empty when the segment runs no file: bash -c "…" is inline code,
+# which the wrapper check covers.
+script_of() {
+  local tok cmd=""
+  for tok in $1; do
+    if [ -z "$cmd" ]; then
+      case "$tok" in -*|*=*|[0-9]*) continue ;; esac
+      case "$PREFIX_RUNNERS" in *" $tok "*) continue ;; esac
+      cmd=$tok
+      case "$SCRIPT_SHELLS" in *" ${tok##*/} "*) continue ;; esac
+      case "$tok" in
+        source|.) continue ;;
+        */*) printf 'exec %s' "$tok"; return ;;
+        *) return ;;
+      esac
+    fi
+    case "$tok" in
+      -c|-[!-]*c*) return ;;
+      -*) continue ;;
+      \<*|\>*|[0-9]\>*) return ;;
+    esac
+    printf 'arg %s' "$tok"
+    return
+  done
+}
+
+# The directory a "cd <dir>" segment moves to from $2, or $2 when it is no cd
+# the guard can follow.
+cd_target() {
+  local from=$2 dir
+  set -- $1
+  [ "$1" = cd ] && [ $# -eq 2 ] || { printf '%s' "$from"; return; }
+  dir=${2#[\"\']}; dir=${dir%[\"\']}
+  case "$dir" in
+    '~') dir=$HOME ;;
+    '~/'*) dir="$HOME/${dir#\~/}" ;;
+    *'$'*|*'`'*|-) dir=$from ;;
+    /*) ;;
+    *) dir="$from/$dir" ;;
+  esac
+  printf '%s' "$dir"
+}
+
+# A shell script run from the command line is a command line too: read it and
+# put it through the whole guard, so bash deploy.sh cannot carry what the guard
+# denies inline. $1 = kind and path from script_of, $2 = directory it runs in.
+inspect_script() {
+  local kind=${1%% *} path=${1#* } dir=$2 file reason first
+  [ "$SCRIPT_DEPTH" -lt "$MAX_SCRIPT_DEPTH" ] || return 0
+  path=${path#[\"\']}; path=${path%[\"\']}
+  case "$path" in
+    '~/'*) path="$HOME/${path#\~/}" ;;
+    ''|*'$'*|*'`'*) return 0 ;;
+  esac
+  case "$path" in
+    /*) file=$path ;;
+    *)
+      file="$dir/$path"
+      [ -f "$file" ] || [ -z "$GUARD_SCRIPT_DIR" ] || file="$GUARD_SCRIPT_DIR/$path" ;;
+  esac
+  # A file that is missing, binary or too large runs unread: the guard checks
+  # shell text, and a missing file fails on its own.
+  [ -f "$file" ] && [ -r "$file" ] || return 0
+  [ "$(wc -c < "$file")" -le "$MAX_SCRIPT_BYTES" ] || return 0
+  grep -Iq . "$file" 2>/dev/null || return 0
+  if [ "$kind" = exec ]; then
+    first=$(head -n 1 "$file")
+    case "$first" in
+      '#!'*) printf '%s\n' "$first" | grep -qE '^#!.*[/[:space:]](ba|z|da|k)?sh([[:space:]]|$)' || return 0 ;;
+    esac
+  fi
+  # Comment lines dropped and continuation lines joined, so a script reads like
+  # the one-line commands the guard was written for.
+  reason=$(awk '
+      /^[[:space:]]*#/ { next }
+      { if (sub(/\\$/, "")) { buf = buf $0 " "; next } print buf $0; buf = "" }
+      END { if (buf != "") print buf }' "$file" |
+    jq -Rsc --arg d "$dir" '{tool_input:{command:.},cwd:$d}' |
+    GUARD_SCRIPT_DEPTH=$((SCRIPT_DEPTH+1)) GUARD_SCRIPT_DIR=$(dirname "$file") \
+      /bin/bash "$HOOK_DIR/deny-dangerous.sh" 2>&1 >/dev/null)
+  if [ $? -eq 2 ]; then
+    echo "Blocked by the command guard: the script $path runs a command the guard denies. $reason" >&2
+    exit 2
+  fi
+}
+
 guarded_clis() {
   if [ -r "$ALLOW_FILE" ]; then
     awk '$1 !~ /^#/ && NF { print $1 }' "$ALLOW_FILE" | sort -u
@@ -206,8 +308,11 @@ guarded_clis() {
 command -v jq >/dev/null 2>&1 || exit 0
 
 # .tool_input = Claude Code and Codex, .toolInput = Grok in Claude-compat mode.
-CMD=$(cat | jq -r '.tool_input.command // .toolInput.command // .command // empty' 2>/dev/null)
+INPUT=$(cat)
+CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // .toolInput.command // .command // empty' 2>/dev/null)
 [ -z "$CMD" ] && exit 0
+RUN_DIR=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+RUN_DIR=${RUN_DIR:-$PWD}
 
 # --- exemption: deleting Dependabot's branches -------------------------------
 # With an exempt segment present, the denylist sees the other segments only,
@@ -241,7 +346,10 @@ fi
 TASK_OUTPUT_RE='/claude-[^/[:space:]]*/([^[:space:]]*/)?tasks/[A-Za-z0-9_-]+\.output'
 POLL_LOOP_RE='(^|[^A-Za-z0-9_.-])(until|while)[[:space:]]'
 SLEEP_RE='(^|[^A-Za-z0-9_.-])sleep[[:space:]]'
-case "$CMD" in
+# A script body is not what Claude Code parses or polls with, so the poll and
+# stage 3 checks are for the command line alone.
+[ "$SCRIPT_DEPTH" -gt 0 ] && CHECK_CMD="" || CHECK_CMD=$CMD
+case "$CHECK_CMD" in
   *tasks/*.output*)
     POLL_CMD=$(strip_heredocs "$CMD" "$WRAPPERS")
     if printf '%s\n' "$POLL_CMD" | grep -qE -- "$TASK_OUTPUT_RE" &&
@@ -255,7 +363,7 @@ esac
 # --- stage 3: uncheckable, matched against the command minus data heredocs ---
 # Checked before stage 2 runs, but after the denylist, so an irreversible
 # command keeps its own deny. The case filter keeps plain commands free of it.
-case "$CMD" in
+case "$CHECK_CMD" in
   *'<<'*|*'${('*|*'$='*)
     if strip_heredocs "$CMD" "$WRAPPERS" | grep -qE -- "$UNCHECKABLE"; then
       echo "Blocked by the command guard: Claude Code cannot parse this command, so it would wait on a permission prompt. Edit files with the Edit or Write tool, and give each Bash call one plain POSIX command line; then go on." >&2
@@ -270,6 +378,10 @@ while IFS= read -r segment; do
   [ -z "$segment" ] && continue
   command=$(command_of "$segment")
   [ -z "$command" ] && continue
+  RUN_DIR=$(cd_target "$segment" "$RUN_DIR")
+
+  script=$(script_of "$segment")
+  [ -n "$script" ] && inspect_script "$script" "$RUN_DIR"
 
   # A wrapper hides its payload from us, so any mention of a guarded CLI is enough.
   case "$WRAPPERS" in

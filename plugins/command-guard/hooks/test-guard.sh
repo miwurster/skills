@@ -9,10 +9,10 @@ GUARD="$(cd "$(dirname "$0")" && pwd)/deny-dangerous.sh"
 pass=0
 fail=0
 
-check() { # $1 = expected: block|allow, $2 = command string
-  local expected="$1" cmd="$2" rc verdict
+check() { # $1 = expected: block|allow, $2 = command string, $3 = cwd (default /tmp)
+  local expected="$1" cmd="$2" cwd="${3:-/tmp}" rc verdict
 
-  jq -cn --arg c "$cmd" '{tool_input:{command:$c},cwd:"/tmp"}' | "$GUARD" >/dev/null 2>&1
+  jq -cn --arg c "$cmd" --arg d "$cwd" '{tool_input:{command:$c},cwd:$d}' | "$GUARD" >/dev/null 2>&1
   rc=$?
   if [ "$rc" -eq 2 ]; then verdict="block"; else verdict="allow"; fi
   if [ "$verdict" = "$expected" ]; then
@@ -236,6 +236,8 @@ check allow 'gcloud compute os-config patch-jobs list-instance-details d274079e 
 check allow 'gcloud compute instance-groups managed list-errors mig-1 --zone europe-west3-a'
 check allow 'gcloud storage cat gs://patch-scripts/post-patch.sh 2>&1'
 check allow 'gcloud storage ls -l "gs://templates/source/" 2>&1'
+check allow 'gcloud pubsub schemas validate-schema --type=avro --definition-file=order.avsc'
+check allow 'gcloud pubsub schemas validate-message --schema-name=order --message-encoding=json --message="{}"'
 check allow 'terraform plan -out plan.tfplan'
 check allow 'terraform -chdir=infra plan'
 check allow 'terraform show plan.tfplan'
@@ -251,6 +253,11 @@ check allow 'terraform fmt -check -recursive'
 check allow 'terragrunt fmt'
 check allow 'terragrunt plan'
 check allow 'terragrunt state list'
+check allow 'terragrunt --version'
+check allow 'terragrunt --help'
+check allow 'terragrunt apply --help'
+check allow 'terraform --version'
+check allow 'terraform -help'
 check allow 'helm list -n prod'
 check allow 'helm get values web'
 check allow 'helm status web'
@@ -337,6 +344,8 @@ check block 'terraform workspace new prod'
 check block 'terragrunt apply'
 check block 'terragrunt destroy -auto-approve'
 check block 'terragrunt run-all apply'
+check block 'terragrunt --non-interactive apply'
+check block 'terraform -chdir=infra apply'
 check block 'helm install web ./chart'
 check block 'helm lint ./chart && helm install web ./chart'
 check block 'helm upgrade --install web ./chart'
@@ -346,6 +355,11 @@ check block 'helm repo add stable https://charts.example.com'
 check block 'helm repo remove stable'
 check block 'gcloud storage rm gs://bucket/x'
 check block 'gcloud storage cp ./x gs://bucket/'
+check block 'gcloud pubsub schemas create order --type=avro --definition-file=order.avsc'
+check block 'gcloud pubsub schemas delete order'
+check block 'for f in a b; do kubectl delete pod $f; done'
+check block 'if true; then terraform apply; fi'
+check block 'exec kubectl delete pod web'
 check block 'helm push loki-1.0.0.tgz oci://registry.example.com/charts'
 check block 'aws ec2 terminate-instances --instance-ids i-1'
 check block 'aws ec2 run-instances --image-id ami-1'
@@ -460,6 +474,38 @@ check allow 'while ! nc -z localhost 5432; do sleep 1; done'
 check allow 'cat /tmp/claude-1000/-home-me-proj/0b1c2d3e/tasks/b54b82yur.output'
 check allow 'tail -50 /tmp/claude-1000/-home-me-proj/0b1c2d3e/tasks/b54b82yur.output'
 check allow 'grep -E "^verify=" /private/tmp/claude-502/-Users-me-proj/abc/tasks/bx1.output'
+
+# ---- a shell script the command runs is read and guarded too ----
+scripts=$(mktemp -d)
+trap 'rm -rf "$scripts"' EXIT
+mkdir -p "$scripts/bin" "$scripts/sub"
+printf '#!/bin/bash\nset -e\nterraform init\nterraform \\\n  apply -auto-approve\n' > "$scripts/apply.sh"
+printf '#!/bin/bash\n# never terraform apply here, and never rm -rf /\nterraform init\nterraform plan -out tf.plan\n' > "$scripts/plan.sh"
+printf 'for p in web api; do\n  kubectl delete pod "$p"\ndone\n' > "$scripts/bin/cleanup"
+printf '#!/bin/sh\ngit push --force origin main\n' > "$scripts/sub/push.sh"
+printf '#!/bin/bash\nbash "$(dirname "$0")/sub/push.sh"\n' > "$scripts/outer.sh"
+printf '#!/bin/bash\nbash sub/push.sh\n' > "$scripts/nested.sh"
+printf '#!/usr/bin/env python3\nprint("terraform apply")\n' > "$scripts/report.py"
+printf '#!/bin/bash\npython3 - <<EOF\nprint(1)\nEOF\n' > "$scripts/heredoc.sh"
+chmod +x "$scripts/apply.sh" "$scripts/bin/cleanup" "$scripts/report.py"
+check block 'bash apply.sh' "$scripts"
+check block 'sh ./apply.sh 2>&1 | tail -20' "$scripts"
+check block './apply.sh' "$scripts"
+check block 'source apply.sh' "$scripts"
+check block '. ./apply.sh' "$scripts"
+check block "bash $scripts/apply.sh"
+check block "cd $scripts && bash apply.sh"
+check block 'cd bin && ./cleanup' "$scripts"
+check block 'bin/cleanup' "$scripts"
+check block 'timeout 600 bash -e apply.sh' "$scripts"
+check block 'bash nested.sh' "$scripts"
+check block 'bash sub/push.sh' "$scripts"
+check allow 'bash plan.sh' "$scripts"
+check allow './report.py' "$scripts"
+check allow 'python3 report.py' "$scripts"
+check allow 'bash heredoc.sh' "$scripts"
+check allow 'bash missing.sh' "$scripts"
+check allow 'bash -c "echo hi"' "$scripts"
 
 # ---- unguarded commands stay untouched ----
 check allow 'npm run verify'

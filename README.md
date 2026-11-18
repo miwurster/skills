@@ -31,6 +31,7 @@ It needs `jq`; without it every command passes.
 - It denies the irreversible: `rm -rf /`, `dd`, `git push --force`, `gh` and `glab repo delete`, and credential reads.
 - It allows only reads for `kubectl`, `gcloud`, `aws`, `terraform`, `terragrunt` and `helm`.
 - It denies any command that Claude Code's own parser cannot check.
+- It reads a shell script the command runs, such as `bash deploy.sh` or `./deploy.sh`, and applies the first two rules to it.
 
 ### `mermaid`
 

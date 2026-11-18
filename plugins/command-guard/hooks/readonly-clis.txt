@@ -28,17 +28,23 @@ gcloud ^logging[[:space:]]+read([[:space:]]|$)
 gcloud ^builds[[:space:]]+log([[:space:]]|$)
 gcloud ^storage[[:space:]]+(ls|cat|du)([[:space:]]|$)
 gcloud (^|[[:space:]])--help([[:space:]]|$)
+gcloud ^pubsub[[:space:]]+schemas[[:space:]]+validate-[a-z-]+([[:space:]]|$)
 
 # terraform / terragrunt — init is allowed because plan is useless without it,
 # and it writes only .terraform/. It is the weakest entry here: it downloads and
 # executes provider and module code. state rm/mv/push and import are not reads.
 # fmt is allowed although it writes: it only rewrites local .tf files, never an env.
+# An empty argument list is flags alone (--version, --help): no verb runs.
 terraform ^(plan|show|output|validate|providers|version|init)([[:space:]]|$)
 terraform ^state[[:space:]]+(list|show|pull)([[:space:]]|$)
 terraform ^fmt([[:space:]]|$)
+terraform ^$
+terraform (^|[[:space:]])--?help([[:space:]]|$)
 terragrunt ^(plan|show|output|validate|providers|version|init)([[:space:]]|$)
 terragrunt ^state[[:space:]]+(list|show|pull)([[:space:]]|$)
 terragrunt ^fmt([[:space:]]|$)
+terragrunt ^$
+terragrunt (^|[[:space:]])--?help([[:space:]]|$)
 
 # helm — install, upgrade, uninstall and rollback are not reads.
 # dependency build and update are allowed because template is useless on an
