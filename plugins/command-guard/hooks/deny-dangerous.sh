@@ -95,7 +95,7 @@ hand_over() {
 
 # One shell word: a quoted string stays inside its word, quotes kept, so
 # FOO="kubectl get" is one assignment and "my file.sh" one path.
-WORD_RE='^[[:space:]]*((\\.|[^[:space:]\\"'\'']|"([^"\\]|\\.)*"?|'\''[^'\'']*'\''?)+)(.*)$'
+WORD_RE='^[[:space:]]*((\\.|[^[:space:]\\"'\'']|"([^"\\]|\\.)*"|'\''[^'\'']*'\'')+)(.*)$'
 
 # The words of segment $1, in WORDS.
 split_words() {
