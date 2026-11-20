@@ -8,19 +8,42 @@
 GUARD="$(cd "$(dirname "$0")" && pwd)/deny-dangerous.sh"
 pass=0
 fail=0
+checks=0
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/results"
 
+# Records a case; run_checks runs them all in parallel once every script exists.
 check() { # $1 = expected: block|allow, $2 = command string, $3 = cwd (default /tmp)
-  local expected="$1" cmd="$2" cwd="${3:-/tmp}" rc verdict
+  checks=$((checks+1))
+  printf '%s\0%s\0%s\0%s\0' "$checks" "$1" "$2" "${3:-/tmp}" >> "$work/cases"
+}
 
-  jq -cn --arg c "$cmd" --arg d "$cwd" '{tool_input:{command:$c},cwd:$d}' | "$GUARD" >/dev/null 2>&1
-  rc=$?
-  if [ "$rc" -eq 2 ]; then verdict="block"; else verdict="allow"; fi
-  if [ "$verdict" = "$expected" ]; then
-    pass=$((pass+1))
+# One case, run by xargs: $1 = number, $2 = expected, $3 = command, $4 = cwd.
+run_check() {
+  local verdict=allow
+  jq -cn --arg c "$3" --arg d "$4" '{tool_input:{command:$c},cwd:$d}' | "$GUARD" >/dev/null 2>&1
+  [ $? -eq 2 ] && verdict=block
+  if [ "$verdict" = "$2" ]; then
+    : > "$RESULTS/$1.pass"
   else
-    fail=$((fail+1))
-    echo "FAIL expected=$expected got=$verdict : $cmd"
+    echo "FAIL expected=$2 got=$verdict : $3" > "$RESULTS/$1.fail"
   fi
+}
+
+run_checks() {
+  local i
+  export GUARD RESULTS="$work/results"
+  export -f run_check
+  xargs -0 -n 4 -P "$(sysctl -n hw.ncpu 2>/dev/null || nproc)" bash -c 'run_check "$@"' _ < "$work/cases"
+  for ((i = 1; i <= checks; i++)); do
+    if [ -e "$RESULTS/$i.pass" ]; then
+      pass=$((pass+1))
+    else
+      fail=$((fail+1))
+      cat "$RESULTS/$i.fail" 2>/dev/null || echo "FAIL no verdict for case $i"
+    fi
+  done
 }
 
 # ---- denylist: must be BLOCKED ----
@@ -563,8 +586,7 @@ check allow 'tail -50 /tmp/claude-1000/-home-me-proj/0b1c2d3e/tasks/b54b82yur.ou
 check allow 'grep -E "^verify=" /private/tmp/claude-502/-Users-me-proj/abc/tasks/bx1.output'
 
 # ---- a shell script the command runs is read and guarded too ----
-scripts=$(mktemp -d)
-trap 'rm -rf "$scripts"' EXIT
+scripts=$work/scripts
 mkdir -p "$scripts/bin" "$scripts/sub"
 printf '#!/bin/bash\nset -e\nterraform init\nterraform \\\n  apply -auto-approve\n' > "$scripts/apply.sh"
 printf '#!/bin/bash\n# never terraform apply here, and never rm -rf /\nterraform init\nterraform plan -out tf.plan\n' > "$scripts/plan.sh"
@@ -657,6 +679,8 @@ check allow 'npm run verify'
 check allow 'grep -rn "kubectl" docs/'
 check allow 'git commit -m "docs: mention terraform apply"'
 check allow 'cat hooks/readonly-clis.txt'
+
+run_checks
 
 # ---- FALLBACK_CLIS mirrors the CLIs readonly-clis.txt names ----
 fallback=$(sed -n 's/^FALLBACK_CLIS="\(.*\)"$/\1/p' "$GUARD" | tr ' ' '\n' | sort -u)

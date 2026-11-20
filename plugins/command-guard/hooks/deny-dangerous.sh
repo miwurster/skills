@@ -174,12 +174,21 @@ command_of() {
   done
 }
 
+# The words in $1 joined by |, in ALTERNATION.
+alternation() {
+  local words IFS=$' \t\n'
+  words=($1)
+  IFS='|'
+  ALTERNATION="${words[*]}"
+}
+
 # The command line with heredoc bodies dropped: a body is data (a commit message,
 # a file written with cat), not a command. $2 lists the commands that run their
 # heredoc; a line naming one of them keeps its body visible. A << inside quotes
 # or a comment is text, but one inside a $(…) or `…` in double quotes is code.
 strip_heredocs() {
-  printf '%s\n' "$1" | awk -v runner="$(echo $2 | tr -s ' ' '|')" '
+  alternation "$2"
+  printf '%s\n' "$1" | awk -v runner="$ALTERNATION" '
     BEGIN { ctx = "T" }
     function top() { return substr(ctx, length(ctx)) }
     function push(c) { ctx = ctx c }
@@ -237,7 +246,8 @@ strip_heredocs() {
 # A string that runs also gets a line of its own at the end, unquoted, so a
 # pattern finds bash -c 'rm -rf ~' as the rm -rf ~ it runs.
 drop_data_quotes() {
-  printf '%s\n' "$1" | awk -v runner="$(echo $WRAPPERS $INTERPRETERS trap | tr -s ' ' '|')" '
+  alternation "$WRAPPERS $INTERPRETERS trap"
+  printf '%s\n' "$1" | awk -v runner="$ALTERNATION" '
     function end_word(  w) {
       w = word
       sub(/.*\//, "", w)
@@ -524,22 +534,31 @@ inspect_remote() {
   fi
 }
 
-guarded_clis() {
-  if [ -r "$ALLOW_FILE" ]; then
-    awk '$1 !~ /^#/ && NF { print $1 }' "$ALLOW_FILE" | sort -u
-  else
-    printf '%s\n' $FALLBACK_CLIS
+# The guarded CLIs in CLIS, and the allowlist lines in ALLOW_CLI and ALLOW_RE.
+load_allowlist() {
+  local allow_cli allow_pattern
+  CLIS=" " ALLOW_CLI=() ALLOW_RE=()
+  if [ ! -r "$ALLOW_FILE" ]; then
+    CLIS=$FALLBACK_CLIS
+    return
   fi
+  while read -r allow_cli allow_pattern; do
+    case "$allow_cli" in ''|\#*) continue ;; esac
+    ALLOW_CLI[${#ALLOW_CLI[@]}]=$allow_cli
+    ALLOW_RE[${#ALLOW_RE[@]}]=$allow_pattern
+    case "$CLIS" in *" $allow_cli "*) ;; *) CLIS="$CLIS$allow_cli " ;; esac
+  done < "$ALLOW_FILE"
 }
 
 # Without jq we cannot read the command: fail open rather than break agents.
 command -v jq >/dev/null 2>&1 || exit 0
 
 # .tool_input = Claude Code and Codex, .toolInput = Grok in Claude-compat mode.
-INPUT=$(cat)
-CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // .toolInput.command // .command // empty' 2>/dev/null)
+# One jq call reads both fields; @sh quotes them for eval.
+CMD="" RUN_DIR=""
+eval "$(jq -r '@sh "CMD=\(.tool_input.command // .toolInput.command // .command // "") RUN_DIR=\(.cwd // "")"' 2>/dev/null)"
+while [[ $CMD == *$'\n' ]]; do CMD=${CMD%$'\n'}; done
 [ -z "$CMD" ] && exit 0
-RUN_DIR=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 RUN_DIR=${RUN_DIR:-$PWD}
 
 # --- exemption: deleting Dependabot's branches -------------------------------
@@ -548,13 +567,14 @@ RUN_DIR=${RUN_DIR:-$PWD}
 # Otherwise it sees the whole command line minus data-only heredoc bodies.
 DENY_CMD=$(strip_heredocs "$CMD" "$HEREDOC_SHELLS $INTERPRETERS")
 [ "$IN_SCRIPT" = 1 ] && DENY_CMD=$(drop_data_quotes "$DENY_CMD")
+SEGMENTS=$(segments "$CMD")
 exempt=0
 rest=""
 while IFS= read -r segment; do
   if dependabot_delete "$segment"; then exempt=1; else rest="$rest$segment
 "; fi
 done <<SEGMENTS
-$(segments "$CMD")
+$SEGMENTS
 SEGMENTS
 [ "$exempt" = 1 ] && DENY_CMD=$rest
 
@@ -611,7 +631,7 @@ esac
 
 # --- stage 2: read allowlist, matched per command segment -------------------
 # Segment so an allowed read cannot smuggle a mutation: "cd /tmp && kubectl apply".
-CLIS=$(guarded_clis)
+load_allowlist
 while IFS= read -r segment; do
   [ -z "$segment" ] && continue
   split_words "$segment"
@@ -648,19 +668,16 @@ while IFS= read -r segment; do
 
     strip_flags "$COMMAND_AT"
     args=$ARGS
-    allowed=0
-    while read -r allow_cli allow_pattern; do
-      [ -z "$allow_cli" ] && continue
-      case "$allow_cli" in \#*) continue ;; esac
-      [ "$allow_cli" = "$cli" ] || continue
-      printf '%s\n' "$args" | grep -qE -- "$allow_pattern" && { allowed=1; break; }
-    done < "$ALLOW_FILE"
+    allow=()
+    for i in "${!ALLOW_CLI[@]}"; do
+      [ "${ALLOW_CLI[$i]}" = "$cli" ] && allow[${#allow[@]}]="-e${ALLOW_RE[$i]}"
+    done
 
-    [ "$allowed" = 1 ] ||
+    [ ${#allow[@]} -gt 0 ] && printf '%s\n' "$args" | grep -qE "${allow[@]}" ||
       hand_over "Blocked by the command guard: only reads are allowed for $cli, and '$cli $args' is not one of them (plugins/command-guard/hooks/readonly-clis.txt in miwurster/skills). If this really is a read, the fix is one line in that file plus a case in test-guard.sh, made there and synced here."
   done
 done <<SEGMENTS
-$(segments "$CMD")
+$SEGMENTS
 SEGMENTS
 
 exit 0
