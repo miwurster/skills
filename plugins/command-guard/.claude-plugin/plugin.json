@@ -1,6 +1,6 @@
 {
   "name": "command-guard",
   "description": "A PreToolUse hook that inspects every agent Bash command: it denies the irreversible, allows only reads for kubectl, gcloud, aws, terraform, terragrunt, helm and stripe and hands any other command of theirs to the user to run, and denies what Claude Code's own parser cannot check.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "author": { "name": "Michael Wurster" }
 }

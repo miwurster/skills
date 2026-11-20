@@ -523,6 +523,7 @@ check block $'bash <<EOF\nkubectl apply -f x.yaml\nEOF'
 # ---- the denylist skips data-only heredoc bodies, never runnable ones ----
 check allow $'git add hooks/deny-dangerous.sh && git commit -F - <<\'EOF\'\nfix: x\n\nA write anywhere else (>/dev/disk0) still fails.\nEOF'
 check allow $'git commit -F - <<EOF\ndocs: never git push --force here\nEOF'
+check allow $'git commit -m "$(cat <<\'EOF\'\ndocs: never git push --force here\nEOF\n)"'
 check allow $'cat > /tmp/note.md <<-EOF\n\tgit push --force\n\tEOF'
 check block $'bash <<EOF\ngit push --force\nEOF'
 check block $'/bin/sh <<EOF\ngit push --force\nEOF'
@@ -583,6 +584,12 @@ printf '#!/bin/bash\ntrap \047rm -rf ~\047 EXIT\n' > "$scripts/trap.sh"
 printf '#!/bin/bash\necho hi  # don\047t\nrm -rf ~\necho \047done\047\n' > "$scripts/comment.sh"
 printf '#!/bin/bash\necho "cleaning up"\nrm -rf ~\n' > "$scripts/unquoted.sh"
 printf '#!/bin/bash\npython3 - <<EOF\nimport os; os.system("echo x > /dev/disk2")\nEOF\n' > "$scripts/py-heredoc.sh"
+printf '#!/bin/bash\necho "use cat <<EOF"\necho hi\ngit push --force origin main\n' > "$scripts/quoted-heredoc.sh"
+printf '#!/bin/bash\ncheck allow \047cat <<EOF\047\ngit push --force origin main\n' > "$scripts/single-quoted-heredoc.sh"
+printf '#!/bin/bash\ncat > notes.md <<EOF\ngit push --force origin main\nEOF\ngit commit -m "$(cat <<\047EOF\047\ndocs: never rm -rf ~\nEOF\n)"\n' > "$scripts/heredoc-data.sh"
+printf '#!/bin/bash\nssh server \047rm -rf ~\047\n' > "$scripts/ssh.sh"
+printf '#!/bin/bash\nssh -p 22 -i key host \047rm -rf ~\047\n' > "$scripts/ssh-options.sh"
+printf '#!/bin/bash\nssh server \047uptime\047\n' > "$scripts/ssh-read.sh"
 chmod +x "$scripts/apply.sh" "$scripts/bin/cleanup" "$scripts/report.py"
 check block 'bash apply.sh' "$scripts"
 check block 'sh ./apply.sh 2>&1 | tail -20' "$scripts"
@@ -612,6 +619,12 @@ check block 'bash trap.sh' "$scripts"
 check block 'bash comment.sh' "$scripts"
 check block 'bash unquoted.sh' "$scripts"
 check block 'bash py-heredoc.sh' "$scripts"
+check block 'bash quoted-heredoc.sh' "$scripts"
+check block 'bash single-quoted-heredoc.sh' "$scripts"
+check allow 'bash heredoc-data.sh' "$scripts"
+check block 'bash ssh.sh' "$scripts"
+check block 'bash ssh-options.sh' "$scripts"
+check allow 'bash ssh-read.sh' "$scripts"
 
 # ---- unguarded commands stay untouched ----
 check allow 'npm run verify'

@@ -164,9 +164,14 @@ command_of() {
 
 # The command line with heredoc bodies dropped: a body is data (a commit message,
 # a file written with cat), not a command. $2 lists the commands that run their
-# heredoc; a line naming one of them keeps its body visible.
+# heredoc; a line naming one of them keeps its body visible. A << inside quotes
+# or a comment is text, but one inside a $(…) or `…` in double quotes is code.
 strip_heredocs() {
   printf '%s\n' "$1" | awk -v runner="$(echo $2 | tr -s ' ' '|')" '
+    BEGIN { ctx = "T" }
+    function top() { return substr(ctx, length(ctx)) }
+    function push(c) { ctx = ctx c }
+    function pop() { if (length(ctx) > 1) ctx = substr(ctx, 1, length(ctx) - 1) }
     skip {
       line = $0
       if (dash) sub(/^\t+/, "", line)
@@ -174,10 +179,37 @@ strip_heredocs() {
       next
     }
     {
-      if (match($0, /<<-?[[:space:]]*["\047]?[A-Za-z_][A-Za-z0-9_]*/) &&
-          substr($0, RSTART, 3) != "<<<" &&
-          $0 !~ ("(^|[[:space:];&|(`\"\047])([^[:space:]]*/)?(" runner ")([[:space:]<;&|)]|$)")) {
-        delim = substr($0, RSTART, RLENGTH)
+      start = 0
+      n = length($0)
+      for (i = 1; i <= n; i++) {
+        c = substr($0, i, 1); t = top()
+        if (t == "S") { if (c == "\047") pop(); continue }
+        if (t == "A") { if (c == "\\") i++; else if (c == "\047") pop(); continue }
+        if (c == "\\") { i++; continue }
+        if (t == "D") {
+          if (c == "\"") pop()
+          else if (c == "`") push("B")
+          else if (substr($0, i, 2) == "$(") { push("P"); i++ }
+          continue
+        }
+        if (c == "\047") { push(substr($0, i - 1, 1) == "$" ? "A" : "S"); continue }
+        if (c == "\"") { push("D"); continue }
+        if (c == "`") { if (t == "B") pop(); else push("B"); continue }
+        if (c == "(") { if (t == "P") push("P"); continue }
+        if (c == ")") { if (t == "P") pop(); continue }
+        if (c == "#" && (i == 1 || substr($0, i - 1, 1) ~ /[[:space:];&|(]/)) break
+        if (substr($0, i, 3) == "<<<") { i += 2; continue }
+        if (substr($0, i, 2) == "<<") {
+          if (!start && match(substr($0, i), /^<<-?[[:space:]]*["\047]?[A-Za-z_][A-Za-z0-9_]*/)) {
+            start = i; len = RLENGTH
+            i += len - 1
+            if (substr($0, start, len) ~ /["\047][A-Za-z_][A-Za-z0-9_]*$/) i++
+          } else i++
+          continue
+        }
+      }
+      if (start && $0 !~ ("(^|[[:space:];&|(`\"\047])([^[:space:]]*/)?(" runner ")([[:space:]<;&|)]|$)")) {
+        delim = substr($0, start, len)
         dash = (substr(delim, 3, 1) == "-")
         sub(/^<<-?[[:space:]]*["\047]?/, "", delim)
         skip = 1
@@ -188,12 +220,12 @@ strip_heredocs() {
 
 # Script text $1 with the text of its quoted strings dropped, since a script
 # passes data around in them (echo 'rm -rf ~'). A string stays when its pipeline
-# runs it: a wrapper, an interpreter, trap or a -c flag outside quotes, or a $(…)
+# runs it: a wrapper, an interpreter, trap, ssh or a -c flag outside quotes, or a $(…)
 # or `…` inside double quotes. Heredoc bodies left in $1 run, so they stay too.
 # A string that runs also gets a line of its own at the end, unquoted, so a
 # pattern finds bash -c 'rm -rf ~' as the rm -rf ~ it runs.
 drop_data_quotes() {
-  printf '%s\n' "$1" | awk -v runner="$(echo $WRAPPERS $INTERPRETERS trap | tr -s ' ' '|')" '
+  printf '%s\n' "$1" | awk -v runner="$(echo $WRAPPERS $INTERPRETERS trap ssh | tr -s ' ' '|')" '
     function end_word(  w) {
       w = word
       sub(/.*\//, "", w)
