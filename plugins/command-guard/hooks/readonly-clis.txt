@@ -69,3 +69,23 @@ aws ^cloudtrail[[:space:]]+lookup-events([[:space:]]|$)
 aws ^dynamodb[[:space:]]+(scan|query)([[:space:]]|$)
 aws ^configure[[:space:]]+list([[:space:]]|$)
 aws ^([a-z0-9-]+[[:space:]]+){0,2}help([[:space:]]|$)
+
+# stripe — deny by default, and the same rules in test mode, a sandbox and live:
+# the guard cannot tell them apart, since STRIPE_API_KEY or --api-key may hold a
+# live key. So trigger and fixtures stay out too: each one writes to the account.
+# Resource reads are <resource> <op>, op list, retrieve, search, list_* or
+# retrieve_*. The resources are named, not matched by shape, so an ID or a write
+# op before the read op (customers delete cus_x list) and a command named like a
+# resource (sandboxes list, login list, post customers list) match nothing here.
+# The names come from stripe --map=paths; a new resource is one more name.
+# get sends GET only. config is out because config --list prints the API keys.
+stripe ^$
+stripe ^(get|whoami|version|resources|docs|help)([[:space:]]|$)
+stripe ^logs[[:space:]]+tail([[:space:]]|$)
+stripe (^|[[:space:]])(--help|-h)([[:space:]]|$)
+stripe ^(accounts|apple_pay_domains|application_fees|balance|balance_settings|balance_transactions|capabilities|cash_balances|charges|confirmation_tokens|country_specs|coupons|credit_note_line_items|credit_notes)[[:space:]]+(list|retrieve|search|(list|retrieve)_[a-z_]+)([[:space:]]|$)
+stripe ^(customer_balance_transactions|customer_cash_balance_transactions|customers|disputes|events|exchange_rates|external_accounts|fee_refunds|file_links|files|invoice_line_items|invoice_payments|invoice_rendering_templates|invoiceitems|invoices)[[:space:]]+(list|retrieve|search|(list|retrieve)_[a-z_]+)([[:space:]]|$)
+stripe ^(mandates|payment_attempt_records|payment_intent_amount_details_line_items|payment_intents|payment_links|payment_method_configurations|payment_method_domains|payment_methods|payment_records|payment_sources|payouts|persons|plans|prices|product_features|products|promotion_codes|quotes)[[:space:]]+(list|retrieve|search|(list|retrieve)_[a-z_]+)([[:space:]]|$)
+stripe ^(refunds|reviews|scheduled_query_runs|setup_attempts|setup_intents|shipping_rates|sources|subscription_items|subscription_schedules|subscriptions|tax_codes|tax_ids|tax_rates|tokens|topups|transfer_reversals|transfers|webhook_endpoints)[[:space:]]+(list|retrieve|search|(list|retrieve)_[a-z_]+)([[:space:]]|$)
+stripe ^(billing|billing_portal|checkout|climate|entitlements|financial_connections|forwarding|identity|issuing|product_catalog|radar|reporting|tax|terminal|test_helpers|three_d_secure|treasury)[[:space:]]+(accounts|active_entitlements|alerts|authentications|authorizations|calculations|cardholders|cards|configurations|credit_balance_summaries|credit_balance_transactions|credit_grants|credit_reversals|debit_reversals|disputes|early_fraud_warnings|features|feedback_options|financial_accounts|inbound_transfers|locations|meter_event_summaries|meters|orders|outbound_payments|outbound_transfers|personalization_designs|physical_bundles|products|query-runs|readers|received_credits|received_debits|registrations|report_runs|report_types|requests|sessions|settings|suppliers|test_clocks|tokens|transaction_entrys|transactions|trial_offers|value_list_items|value_lists|verification_reports|verification_sessions)[[:space:]]+(list|retrieve|search|(list|retrieve)_[a-z_]+)([[:space:]]|$)
+stripe ^v2[[:space:]]+(commerce|core|money_management)([[:space:]]+(account_person_tokens|account_persons|account_tokens|accounts|adjustments|event_destinations|events|financial_accounts|financial_addresss|gb_bank_accounts|inbound_transfers|outbound_payments|outbound_setup_intents|payout_intents|payout_methods|payout_methods_bank_account_specs|product_catalog_imports|received_credits|recipient_verifications|transaction_entrys|transactions|us_bank_accounts|vaults)){1,2}[[:space:]]+(list|retrieve|search|(list|retrieve)_[a-z_]+)([[:space:]]|$)

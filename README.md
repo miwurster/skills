@@ -29,7 +29,8 @@ A `PreToolUse` hook on every agent `Bash` command.
 It needs `jq`; without it every command passes.
 
 - It denies the irreversible: `rm -rf /`, `dd`, `git push --force`, `gh` and `glab repo delete`, and credential reads.
-- It allows only reads for `kubectl`, `gcloud`, `aws`, `terraform`, `terragrunt` and `helm`.
+- It allows only reads for `kubectl`, `gcloud`, `aws`, `terraform`, `terragrunt`, `helm` and `stripe`.
+  For any other command of theirs, it tells the agent to hand the exact command to you, so you can run it yourself with `! <command>`.
 - It denies any command that Claude Code's own parser cannot check.
 - It reads a shell script the command runs, such as `bash deploy.sh` or `./deploy.sh`, and applies the first two rules to it.
 

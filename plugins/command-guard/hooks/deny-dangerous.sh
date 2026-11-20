@@ -37,7 +37,7 @@ ALLOW_FILE="$HOOK_DIR/readonly-clis.txt"
 
 # Used only when ALLOW_FILE cannot be read, so stage 2 still knows what to deny.
 # A copy of the CLIs ALLOW_FILE names; test-guard.sh fails when the two drift.
-FALLBACK_CLIS="kubectl gcloud aws terraform terragrunt helm"
+FALLBACK_CLIS="kubectl gcloud aws terraform terragrunt helm stripe"
 
 # Commands that run another command we cannot inspect. A segment led by one of
 # these is denied as soon as it so much as mentions a guarded CLI.
@@ -73,12 +73,23 @@ VALUE_FLAGS=" -n --namespace --context --kubeconfig --cluster --user -o --output
 --format --filter --region --zone --configuration --chdir -chdir --var-file
 -var-file --var -var --state -state --out -out --target -target --backend-config
 --working-dir --terragrunt-working-dir --kube-context --values --set --repo --limit
---profile --endpoint-url --query --ca-bundle --cli-read-timeout --cli-connect-timeout "
+--profile --endpoint-url --query --ca-bundle --cli-read-timeout --cli-connect-timeout
+--api-key --project-name --config --log-level --device-name "
 # One line, so the flag opening each continuation line still matches " $tok ".
 VALUE_FLAGS=" $(printf '%s ' $VALUE_FLAGS)"
 
+# Flags that take a value after a guarded CLI only. A prefix runner reads them
+# differently (command -p, watch --color), so command_of must not skip past them.
+CLI_VALUE_FLAGS=" -p --color "
+
 deny() {
   echo "$1 Do not retry it or try to work around the guard; explain the block to the user instead." >&2
+  exit 2
+}
+
+# A command a guarded CLI refuses may be what the user wants: hand it to them.
+hand_over() {
+  echo "$1 Do not retry it or try to work around the guard. Instead, give the user the exact, complete command in a code block, so they can run it themselves (for example by typing ! followed by the command in the Claude Code prompt), and say in one sentence what it changes." >&2
   exit 2
 }
 
@@ -92,7 +103,7 @@ strip_flags() {
       -*)
         case "$tok" in
           *=*) ;;
-          *) case "$VALUE_FLAGS" in *" $tok "*) skip=1 ;; esac ;;
+          *) case "$VALUE_FLAGS$CLI_VALUE_FLAGS" in *" $tok "*) skip=1 ;; esac ;;
         esac
         ;;
       *) rest="$tok" ;;
@@ -388,7 +399,7 @@ while IFS= read -r segment; do
     *" $command "*)
       for cli in $CLIS; do
         printf '%s\n' "$segment" | grep -qE -- "(^|[^A-Za-z0-9_-])$cli([^A-Za-z0-9_-]|$)" &&
-          deny "Blocked by the command guard: a $cli command inside '$command' cannot be inspected, so it is denied. Run the read directly instead."
+          hand_over "Blocked by the command guard: a $cli command inside '$command' cannot be inspected, so it is denied. If it is a read, run it directly instead."
       done
       continue ;;
   esac
@@ -397,7 +408,7 @@ while IFS= read -r segment; do
     [ "$command" = "$cli" ] || continue
 
     [ -r "$ALLOW_FILE" ] ||
-      deny "Blocked by the command guard: the read allowlist ($ALLOW_FILE) is unreadable, so every $cli command is denied."
+      hand_over "Blocked by the command guard: the read allowlist ($ALLOW_FILE) is unreadable, so every $cli command is denied."
 
     args=$(strip_flags "${segment#*$cli}")
     allowed=0
@@ -409,7 +420,7 @@ while IFS= read -r segment; do
     done < "$ALLOW_FILE"
 
     [ "$allowed" = 1 ] ||
-      deny "Blocked by the command guard: only reads are allowed for $cli, and '$cli $args' is not one of them (plugins/command-guard/hooks/readonly-clis.txt in miwurster/skills). If this really is a read, the fix is one line in that file plus a case in test-guard.sh, made there and synced here."
+      hand_over "Blocked by the command guard: only reads are allowed for $cli, and '$cli $args' is not one of them (plugins/command-guard/hooks/readonly-clis.txt in miwurster/skills). If this really is a read, the fix is one line in that file plus a case in test-guard.sh, made there and synced here."
   done
 done <<SEGMENTS
 $(segments "$CMD")
