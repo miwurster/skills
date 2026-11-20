@@ -503,6 +503,12 @@ check allow 'hash kubectl'
 check block 'command kubectl delete pod x'
 check block 'command -p terraform apply'
 check block 'command -v kubectl && kubectl delete pod x'
+check allow 'CLIS="kubectl gcloud helm"; echo "$CLIS"'
+check allow "CLIS='kubectl gcloud helm' && echo \"\$CLIS\""
+check allow 'FOO="a b" kubectl get pods'
+check block 'FOO="a b" kubectl delete pod web'
+check block "FOO='a b' kubectl delete pod web"
+check block 'KUBECONFIG="/tmp/my kc" kubectl apply -f x.yaml'
 check allow 'echo "kubectl apply -f x.yaml" > /tmp/note.txt'
 check allow 'helm template ./chart > /tmp/rendered.yaml'
 
@@ -567,6 +573,16 @@ printf '#!/bin/bash\nbash "$(dirname "$0")/sub/push.sh"\n' > "$scripts/outer.sh"
 printf '#!/bin/bash\nbash sub/push.sh\n' > "$scripts/nested.sh"
 printf '#!/usr/bin/env python3\nprint("terraform apply")\n' > "$scripts/report.py"
 printf '#!/bin/bash\npython3 - <<EOF\nprint(1)\nEOF\n' > "$scripts/heredoc.sh"
+printf '#!/bin/bash\nCLIS="kubectl gcloud aws terraform"\nFOO="a b" kubectl get pods\necho "rm -rf ~"\ncheck block \047rm -rf ~\047\ngit commit -m "never git push --force"\n' > "$scripts/data.sh"
+printf '#!/bin/bash\nbash -c \047rm -rf ~\047\n' > "$scripts/bash-c.sh"
+printf '#!/bin/bash\neval "rm -rf ~"\n' > "$scripts/eval.sh"
+printf '#!/bin/bash\nsh -c "git push --force"\n' > "$scripts/sh-c.sh"
+printf '#!/bin/bash\necho \047rm -rf ~\047 | sh\n' > "$scripts/pipe.sh"
+printf '#!/bin/bash\necho \047rm -rf ~\047 |\n  sh\n' > "$scripts/pipe-newline.sh"
+printf '#!/bin/bash\ntrap \047rm -rf ~\047 EXIT\n' > "$scripts/trap.sh"
+printf '#!/bin/bash\necho hi  # don\047t\nrm -rf ~\necho \047done\047\n' > "$scripts/comment.sh"
+printf '#!/bin/bash\necho "cleaning up"\nrm -rf ~\n' > "$scripts/unquoted.sh"
+printf '#!/bin/bash\npython3 - <<EOF\nimport os; os.system("echo x > /dev/disk2")\nEOF\n' > "$scripts/py-heredoc.sh"
 chmod +x "$scripts/apply.sh" "$scripts/bin/cleanup" "$scripts/report.py"
 check block 'bash apply.sh' "$scripts"
 check block 'sh ./apply.sh 2>&1 | tail -20' "$scripts"
@@ -586,6 +602,16 @@ check allow 'python3 report.py' "$scripts"
 check allow 'bash heredoc.sh' "$scripts"
 check allow 'bash missing.sh' "$scripts"
 check allow 'bash -c "echo hi"' "$scripts"
+check allow 'bash data.sh' "$scripts"
+check block 'bash bash-c.sh' "$scripts"
+check block 'bash eval.sh' "$scripts"
+check block 'bash sh-c.sh' "$scripts"
+check block 'bash pipe.sh' "$scripts"
+check block 'bash pipe-newline.sh' "$scripts"
+check block 'bash trap.sh' "$scripts"
+check block 'bash comment.sh' "$scripts"
+check block 'bash unquoted.sh' "$scripts"
+check block 'bash py-heredoc.sh' "$scripts"
 
 # ---- unguarded commands stay untouched ----
 check allow 'npm run verify'

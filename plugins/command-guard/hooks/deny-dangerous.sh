@@ -93,10 +93,27 @@ hand_over() {
   exit 2
 }
 
-# Arguments of one CLI invocation, minus the leading flags, so the verb comes first.
+# One shell word: a quoted string stays inside its word, quotes kept, so
+# FOO="kubectl get" is one assignment and "my file.sh" one path.
+WORD_RE='^[[:space:]]*((\\.|[^[:space:]\\"'\'']|"([^"\\]|\\.)*"?|'\''[^'\'']*'\''?)+)(.*)$'
+
+# The words of segment $1, in WORDS.
+split_words() {
+  local rest=$1
+  WORDS=()
+  while [[ $rest =~ $WORD_RE ]]; do
+    WORDS[${#WORDS[@]}]=${BASH_REMATCH[1]}
+    rest=${BASH_REMATCH[4]}
+  done
+}
+
+# Arguments of one CLI invocation, the WORDS from index $1 on, minus the leading
+# flags, so the verb comes first. Sets ARGS.
 strip_flags() {
-  local tok skip=0 rest=""
-  for tok in $1; do
+  local i=$1 tok skip=0 rest=""
+  while [ "$i" -lt ${#WORDS[@]} ]; do
+    tok=${WORDS[$i]}
+    i=$((i+1))
     if [ -n "$rest" ]; then rest="$rest $tok"; continue; fi
     if [ "$skip" = 1 ]; then skip=0; continue; fi
     case "$tok" in
@@ -109,14 +126,19 @@ strip_flags() {
       *) rest="$tok" ;;
     esac
   done
-  printf '%s' "$rest"
+  ARGS=$rest
 }
 
-# The command a segment actually runs: leading VAR=val, flags and prefix runners
-# (sudo, timeout, watch) skipped, path stripped, so /usr/local/bin/kubectl is kubectl.
+# The command the segment in WORDS actually runs: leading VAR=val, flags and
+# prefix runners (sudo, timeout, watch) skipped, path stripped, so
+# /usr/local/bin/kubectl is kubectl. Sets COMMAND, and COMMAND_AT to the index
+# of the word after it.
 command_of() {
-  local tok skip=0 prev=""
-  for tok in $1; do
+  local i=0 tok skip=0 prev=""
+  COMMAND="" COMMAND_AT=0
+  while [ "$i" -lt ${#WORDS[@]} ]; do
+    tok=${WORDS[$i]}
+    i=$((i+1))
     # command -v/-V looks names up in PATH and runs none of them.
     if [ "$prev" = command ]; then
       case "$tok" in -[!-]*[vV]*|-[vV]*) return ;; esac
@@ -134,7 +156,8 @@ command_of() {
       [0-9]*) continue ;;
     esac
     case "$PREFIX_RUNNERS" in *" $tok "*) continue ;; esac
-    printf '%s' "${tok##*/}"
+    COMMAND=${tok##*/}
+    COMMAND_AT=$i
     return
   done
 }
@@ -161,6 +184,74 @@ strip_heredocs() {
       }
       print
     }'
+}
+
+# Script text $1 with the text of its quoted strings dropped, since a script
+# passes data around in them (echo 'rm -rf ~'). A string stays when its pipeline
+# runs it: a wrapper, an interpreter, trap or a -c flag outside quotes, or a $(…)
+# or `…` inside double quotes. Heredoc bodies left in $1 run, so they stay too.
+# A string that runs also gets a line of its own at the end, unquoted, so a
+# pattern finds bash -c 'rm -rf ~' as the rm -rf ~ it runs.
+drop_data_quotes() {
+  printf '%s\n' "$1" | awk -v runner="$(echo $WRAPPERS $INTERPRETERS trap | tr -s ' ' '|')" '
+    function end_word(  w) {
+      w = word
+      sub(/.*\//, "", w)
+      if (w != "" && !quoted && (w ~ ("^(" runner ")$") || w ~ /^-[A-Za-z]*c$/)) runs = 1
+      word = ""; quoted = 0
+    }
+    function add(s) { kept = kept s; dropped = dropped s }
+    function flush(sep) {
+      end_word()
+      printf "%s%s", (runs ? kept : dropped), sep
+      if (runs) unquoted = unquoted strings
+      kept = ""; dropped = ""; strings = ""; runs = 0
+    }
+    body {
+      print
+      line = $0
+      if (dash) sub(/^\t+/, "", line)
+      if (line == delim) body = 0
+      next
+    }
+    {
+      s = $0 "\n"
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (quote != "") {
+          str = str c
+          if ((quote == "\"" || ansi) && c == "\\") { i++; str = str substr(s, i, 1); continue }
+          if (c != quote) continue
+          kept = kept str
+          strings = strings substr(str, 2, length(str) - 2) "\n"
+          if (quote == "\"" && (index(str, "$(") || index(str, "`"))) dropped = dropped str
+          else dropped = dropped quote quote
+          quote = ""
+          continue
+        }
+        if (c == " " || c == "\t" || (c == "\n" && piped)) { end_word(); add(c); continue }
+        piped = 0
+        if (c == "#" && word == "" && !quoted) { add(substr(s, i, length(s) - i)); i = length(s) - 1; continue }
+        if (c == "\\") { i++; c = c substr(s, i, 1); word = word c; add(c); continue }
+        if (c == "\"" || c == "\047") {
+          ansi = (c == "\047" && substr(word, length(word)) == "$")
+          quote = c; str = c; quoted = 1; continue
+        }
+        if (substr(s, i, 2) == "<<" && substr(s, i, 3) != "<<<" && substr(s, i - 1, 1) != "<" &&
+            match(substr(s, i), /^<<-?[[:space:]]*["\047]?[A-Za-z_][A-Za-z0-9_]*/)) {
+          delim = substr(s, i, RLENGTH)
+          dash = (substr(delim, 3, 1) == "-")
+          sub(/^<<-?[[:space:]]*["\047]?/, "", delim)
+          opened = 1
+        }
+        if (c == "|" && substr(s, i + 1, 1) != "|") { end_word(); add(c); piped = 1; continue }
+        if (c == "&" && (substr(s, i - 1, 1) == ">" || substr(s, i + 1, 1) == ">")) { word = word c; add(c); continue }
+        if (index(";&|`()\n", c)) { flush(c); continue }
+        word = word c; add(c)
+      }
+      if (opened && quote == "") { body = 1; opened = 0 }
+    }
+    END { if (quote != "") add(str); flush("\n"); printf "%s", unquoted }'
 }
 
 # The command line split into the segments stage 2 inspects: heredoc bodies
@@ -219,13 +310,14 @@ dependabot_delete() {
   [ "$deletes" = 1 ] && [ "$refs" -gt 0 ]
 }
 
-# The script file a segment runs, as "<kind> <path>": "arg" for bash x.sh,
-# sh x.sh, source x.sh and . x.sh, "exec" for ./x.sh or any other path run
-# directly. Empty when the segment runs no file: bash -c "…" is inline code,
-# which the wrapper check covers.
+# The script file the segment in WORDS runs, as "<kind> <path>": "arg" for
+# bash x.sh, sh x.sh, source x.sh and . x.sh, "exec" for ./x.sh or any other
+# path run directly. Empty when the segment runs no file: bash -c "…" is inline
+# code, which the wrapper check covers. Sets SCRIPT.
 script_of() {
   local tok cmd=""
-  for tok in $1; do
+  SCRIPT=""
+  for tok in "${WORDS[@]}"; do
     if [ -z "$cmd" ]; then
       case "$tok" in -*|*=*|[0-9]*) continue ;; esac
       case "$PREFIX_RUNNERS" in *" $tok "*) continue ;; esac
@@ -233,7 +325,7 @@ script_of() {
       case "$SCRIPT_SHELLS" in *" ${tok##*/} "*) continue ;; esac
       case "$tok" in
         source|.) continue ;;
-        */*) printf 'exec %s' "$tok"; return ;;
+        */*) SCRIPT="exec $tok"; return ;;
         *) return ;;
       esac
     fi
@@ -242,26 +334,25 @@ script_of() {
       -*) continue ;;
       \<*|\>*|[0-9]\>*) return ;;
     esac
-    printf 'arg %s' "$tok"
+    SCRIPT="arg $tok"
     return
   done
 }
 
-# The directory a "cd <dir>" segment moves to from $2, or $2 when it is no cd
-# the guard can follow.
+# The directory the segment in WORDS moves RUN_DIR to, when it is a cd the
+# guard can follow.
 cd_target() {
-  local from=$2 dir
-  set -- $1
-  [ "$1" = cd ] && [ $# -eq 2 ] || { printf '%s' "$from"; return; }
-  dir=${2#[\"\']}; dir=${dir%[\"\']}
+  local dir
+  [ "${WORDS[0]}" = cd ] && [ ${#WORDS[@]} -eq 2 ] || return
+  dir=${WORDS[1]#[\"\']}; dir=${dir%[\"\']}
   case "$dir" in
     '~') dir=$HOME ;;
     '~/'*) dir="$HOME/${dir#\~/}" ;;
-    *'$'*|*'`'*|-) dir=$from ;;
+    *'$'*|*'`'*|-) return ;;
     /*) ;;
-    *) dir="$from/$dir" ;;
+    *) dir="$RUN_DIR/$dir" ;;
   esac
-  printf '%s' "$dir"
+  RUN_DIR=$dir
 }
 
 # A shell script run from the command line is a command line too: read it and
@@ -330,6 +421,7 @@ RUN_DIR=${RUN_DIR:-$PWD}
 # one per line, so a delete of anything else in the same command still matches.
 # Otherwise it sees the whole command line minus data-only heredoc bodies.
 DENY_CMD=$(strip_heredocs "$CMD" "$WRAPPERS $INTERPRETERS")
+[ "$SCRIPT_DEPTH" -gt 0 ] && DENY_CMD=$(drop_data_quotes "$DENY_CMD")
 exempt=0
 rest=""
 while IFS= read -r segment; do
@@ -341,13 +433,22 @@ SEGMENTS
 [ "$exempt" = 1 ] && DENY_CMD=$rest
 
 # --- stage 1: denylist, matched against the command line in DENY_CMD ---------
+# One grep for all patterns; only a hit, or a pattern grep cannot compile, goes
+# through them one by one to name the match.
 if [ -r "$PATTERNS_FILE" ]; then
+  PATTERNS=()
   while IFS= read -r pattern; do
     case "$pattern" in ''|\#*) continue ;; esac
-    if printf '%s\n' "$DENY_CMD" | grep -qE -- "$pattern" 2>/dev/null; then
-      deny "Blocked by the command guard (plugins/command-guard/hooks/dangerous-patterns.txt in miwurster/skills). Matched pattern: $pattern."
-    fi
+    PATTERNS[${#PATTERNS[@]}]=$pattern
   done < "$PATTERNS_FILE"
+  printf '%s\n' "$DENY_CMD" | grep -qE "${PATTERNS[@]/#/-e}" 2>/dev/null
+  if [ $? -ne 1 ]; then
+    for pattern in "${PATTERNS[@]}"; do
+      if printf '%s\n' "$DENY_CMD" | grep -qE -- "$pattern" 2>/dev/null; then
+        deny "Blocked by the command guard (plugins/command-guard/hooks/dangerous-patterns.txt in miwurster/skills). Matched pattern: $pattern."
+      fi
+    done
+  fi
 fi
 
 # --- polling a background task: the harness already notifies on completion ---
@@ -387,12 +488,14 @@ esac
 CLIS=$(guarded_clis)
 while IFS= read -r segment; do
   [ -z "$segment" ] && continue
-  command=$(command_of "$segment")
+  split_words "$segment"
+  command_of
+  command=$COMMAND
   [ -z "$command" ] && continue
-  RUN_DIR=$(cd_target "$segment" "$RUN_DIR")
+  cd_target
 
-  script=$(script_of "$segment")
-  [ -n "$script" ] && inspect_script "$script" "$RUN_DIR"
+  script_of
+  [ -n "$SCRIPT" ] && inspect_script "$SCRIPT" "$RUN_DIR"
 
   # A wrapper hides its payload from us, so any mention of a guarded CLI is enough.
   case "$WRAPPERS" in
@@ -410,7 +513,8 @@ while IFS= read -r segment; do
     [ -r "$ALLOW_FILE" ] ||
       hand_over "Blocked by the command guard: the read allowlist ($ALLOW_FILE) is unreadable, so every $cli command is denied."
 
-    args=$(strip_flags "${segment#*$cli}")
+    strip_flags "$COMMAND_AT"
+    args=$ARGS
     allowed=0
     while read -r allow_cli allow_pattern; do
       [ -z "$allow_cli" ] && continue
