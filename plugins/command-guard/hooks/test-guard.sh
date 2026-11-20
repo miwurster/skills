@@ -587,9 +587,6 @@ printf '#!/bin/bash\npython3 - <<EOF\nimport os; os.system("echo x > /dev/disk2"
 printf '#!/bin/bash\necho "use cat <<EOF"\necho hi\ngit push --force origin main\n' > "$scripts/quoted-heredoc.sh"
 printf '#!/bin/bash\ncheck allow \047cat <<EOF\047\ngit push --force origin main\n' > "$scripts/single-quoted-heredoc.sh"
 printf '#!/bin/bash\ncat > notes.md <<EOF\ngit push --force origin main\nEOF\ngit commit -m "$(cat <<\047EOF\047\ndocs: never rm -rf ~\nEOF\n)"\n' > "$scripts/heredoc-data.sh"
-printf '#!/bin/bash\nssh server \047rm -rf ~\047\n' > "$scripts/ssh.sh"
-printf '#!/bin/bash\nssh -p 22 -i key host \047rm -rf ~\047\n' > "$scripts/ssh-options.sh"
-printf '#!/bin/bash\nssh server \047uptime\047\n' > "$scripts/ssh-read.sh"
 chmod +x "$scripts/apply.sh" "$scripts/bin/cleanup" "$scripts/report.py"
 check block 'bash apply.sh' "$scripts"
 check block 'sh ./apply.sh 2>&1 | tail -20' "$scripts"
@@ -622,9 +619,38 @@ check block 'bash py-heredoc.sh' "$scripts"
 check block 'bash quoted-heredoc.sh' "$scripts"
 check block 'bash single-quoted-heredoc.sh' "$scripts"
 check allow 'bash heredoc-data.sh' "$scripts"
-check block 'bash ssh.sh' "$scripts"
-check block 'bash ssh-options.sh' "$scripts"
-check allow 'bash ssh-read.sh' "$scripts"
+
+# ---- ssh runs its command under the same rules, on the command line and in a script ----
+ssh_n=0
+check_ssh() { # $1 = expected: block|allow, $2 = command
+  ssh_n=$((ssh_n+1))
+  check "$1" "$2"
+  printf '#!/bin/bash\n%s\n' "$2" > "$scripts/ssh-$ssh_n.sh"
+  check "$1" "bash ssh-$ssh_n.sh" "$scripts"
+}
+check_ssh block "ssh server 'rm -rf ~'"
+check_ssh block 'ssh -p 22 -i key host "rm -rf ~"'
+check_ssh block 'ssh host git push --force origin main'
+check_ssh block "ssh host 'kubectl delete pod web'"
+check_ssh block 'ssh bastion "terraform apply"'
+check_ssh block 'ssh host stripe customers delete cus_1'
+check_ssh block 'ssh -o ConnectTimeout=5 -vp 2222 host -l admin kubectl delete pod web'
+check_ssh block "timeout 30 ssh host 'cd /srv && helm uninstall web'"
+check_ssh block $'ssh host <<EOF\nrm -rf ~\nEOF'
+check_ssh block $'ssh host \'bash -s\' <<EOF\nrm -rf ~\nEOF'
+check_ssh block $'ssh host <<EOF\nkubectl delete pod x\nEOF'
+check_ssh block $'ssh host \'bash -s\' <<EOF\nkubectl delete pod x\nEOF'
+check_ssh block "ssh host 'bash -c \"kubectl delete pod x\"'"
+check_ssh block "ssh jump 'ssh host \"terraform destroy\"'"
+check_ssh allow "ssh host 'kubectl get pods'"
+check_ssh allow "ssh host 'uptime'"
+check_ssh allow 'ssh host'
+check_ssh allow 'ssh -L 8080:localhost:80 host'
+check_ssh allow 'ssh -i ~/.ssh/key -p 22 host kubectl -n prod get pods 2>&1 | tail -5'
+check_ssh allow $'ssh host <<EOF\nuptime\nEOF'
+check_ssh allow $'ssh host \'bash -s\' <<EOF\nkubectl get pods\nEOF'
+check_ssh allow "git commit -m \"fix ssh host 'rm -rf' docs\""
+check_ssh allow 'echo "ssh host kubectl delete pod x" > /tmp/note.txt'
 
 # ---- unguarded commands stay untouched ----
 check allow 'npm run verify'

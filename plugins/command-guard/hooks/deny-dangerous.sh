@@ -17,6 +17,7 @@
 # denied, since Claude Code notifies the agent when that task finishes.
 # A shell script the command runs (bash x.sh, ./x.sh, source x.sh) goes through
 # models 1 and 2 as well, read from disk, scripts it runs in turn included.
+# So does the command ssh runs on a remote host, as if it ran here.
 #
 # Wired by hooks.json as PreToolUse, matcher Bash. Deny = exit 2 + reason on
 # stderr, which Claude Code shows the agent and blocks the call.
@@ -43,6 +44,12 @@ FALLBACK_CLIS="kubectl gcloud aws terraform terragrunt helm stripe"
 # these is denied as soon as it so much as mentions a guarded CLI.
 WRAPPERS=" bash sh zsh dash ksh eval xargs nohup setsid "
 
+# Commands whose heredoc body is commands the guard reads line by line.
+HEREDOC_SHELLS="$WRAPPERS ssh "
+
+# ssh options that take a value, so the word after them is not the host.
+SSH_VALUE_OPTS="bceilmopBDEFIJLOPQRSWw"
+
 # Interpreters that run a heredoc as code. Stage 2 leaves them alone, but the
 # denylist keeps their heredoc bodies in view: os.system() runs what it names.
 INTERPRETERS=" python python3 node ruby perl php osascript deno bun "
@@ -61,9 +68,14 @@ PREFIX_RUNNERS=" $(printf '%s ' $PREFIX_RUNNERS)"
 # Shells that run a script file named as their first argument.
 SCRIPT_SHELLS=" bash sh zsh dash ksh "
 
-# How deep a script that runs a script is followed before the guard stops looking.
+# How deep a script that runs a script, or an ssh command, is followed before
+# the guard stops looking.
 MAX_SCRIPT_DEPTH=4
 SCRIPT_DEPTH=${GUARD_SCRIPT_DEPTH:-0}
+# 1 when the command text comes from a script file, whose quoted strings are data.
+IN_SCRIPT=${GUARD_IN_SCRIPT:-0}
+# 1 when the command runs on a remote host, where local script files do not exist.
+REMOTE=${GUARD_REMOTE:-0}
 # The largest script file the guard reads, in bytes; a larger one runs unread.
 MAX_SCRIPT_BYTES=262144
 
@@ -220,12 +232,12 @@ strip_heredocs() {
 
 # Script text $1 with the text of its quoted strings dropped, since a script
 # passes data around in them (echo 'rm -rf ~'). A string stays when its pipeline
-# runs it: a wrapper, an interpreter, trap, ssh or a -c flag outside quotes, or a $(…)
+# runs it: a wrapper, an interpreter, trap or a -c flag outside quotes, or a $(…)
 # or `…` inside double quotes. Heredoc bodies left in $1 run, so they stay too.
 # A string that runs also gets a line of its own at the end, unquoted, so a
 # pattern finds bash -c 'rm -rf ~' as the rm -rf ~ it runs.
 drop_data_quotes() {
-  printf '%s\n' "$1" | awk -v runner="$(echo $WRAPPERS $INTERPRETERS trap ssh | tr -s ' ' '|')" '
+  printf '%s\n' "$1" | awk -v runner="$(echo $WRAPPERS $INTERPRETERS trap | tr -s ' ' '|')" '
     function end_word(  w) {
       w = word
       sub(/.*\//, "", w)
@@ -289,9 +301,9 @@ drop_data_quotes() {
 # The command line split into the segments stage 2 inspects: heredoc bodies
 # dropped, and separators honoured only outside quotes. Both carry data, not
 # commands, so a guarded CLI named there is prose, not an invocation. A wrapper
-# runs its heredoc, so that body stays visible.
+# or ssh runs its heredoc, so that body stays visible.
 segments() {
-  strip_heredocs "$1" "$WRAPPERS" | awk '
+  strip_heredocs "$1" "$HEREDOC_SHELLS" | awk '
     { buf = buf $0 "\n" }
     END {
       for (i = 1; i <= length(buf); i++) {
@@ -422,10 +434,92 @@ inspect_script() {
       { if (sub(/\\$/, "")) { buf = buf $0 " "; next } print buf $0; buf = "" }
       END { if (buf != "") print buf }' "$file" |
     jq -Rsc --arg d "$dir" '{tool_input:{command:.},cwd:$d}' |
-    GUARD_SCRIPT_DEPTH=$((SCRIPT_DEPTH+1)) GUARD_SCRIPT_DIR=$(dirname "$file") \
+    GUARD_SCRIPT_DEPTH=$((SCRIPT_DEPTH+1)) GUARD_IN_SCRIPT=1 GUARD_SCRIPT_DIR=$(dirname "$file") \
       /bin/bash "$HOOK_DIR/deny-dangerous.sh" 2>&1 >/dev/null)
   if [ $? -eq 2 ]; then
     echo "Blocked by the command guard: the script $path runs a command the guard denies. $reason" >&2
+    exit 2
+  fi
+}
+
+# Word $1 with one level of shell quoting removed, in UNQUOTED.
+unquote() {
+  local w=$1 out="" c q="" i=0
+  while [ "$i" -lt ${#w} ]; do
+    c=${w:i:1}
+    i=$((i+1))
+    if [ "$q" = "'" ]; then
+      [ "$c" = "'" ] && q="" || out=$out$c
+      continue
+    fi
+    if [ "$q" = '"' ]; then
+      case "$c" in
+        '"') q="" ;;
+        \\)
+          case "${w:i:1}" in
+            '$'|'`'|'"'|\\) out=$out${w:i:1}; i=$((i+1)) ;;
+            *) out=$out$c ;;
+          esac ;;
+        *) out=$out$c ;;
+      esac
+      continue
+    fi
+    case "$c" in
+      "'"|'"') q=$c ;;
+      \\) out=$out${w:i:1}; i=$((i+1)) ;;
+      *) out=$out$c ;;
+    esac
+  done
+  UNQUOTED=$out
+}
+
+# A redirection word, and one whose target is the next word.
+REDIRECT_RE='^([0-9]*|&)[<>]'
+REDIRECT_OP_RE='^([0-9]*|&)(<+|>+)&?$'
+
+# The command the ssh segment in WORDS runs on the remote host: its words after
+# the options and the host, unquoted and joined by spaces, as ssh sends them.
+# Local redirections are left out. Sets SSH_HOST and REMOTE_CMD.
+remote_command_of() {
+  local i=$COMMAND_AT tok opts=1 j
+  SSH_HOST="" REMOTE_CMD=""
+  while [ "$i" -lt ${#WORDS[@]} ]; do
+    tok=${WORDS[$i]}
+    i=$((i+1))
+    if [[ $tok =~ $REDIRECT_RE ]]; then
+      [[ $tok =~ $REDIRECT_OP_RE ]] && i=$((i+1))
+      continue
+    fi
+    if [ "$opts" = 1 ]; then
+      case "$tok" in
+        --) opts=0; continue ;;
+        -?*)
+          for ((j = 1; j < ${#tok}; j++)); do
+            case "$SSH_VALUE_OPTS" in
+              *"${tok:j:1}"*) [ $((j+1)) -eq ${#tok} ] && i=$((i+1)); break ;;
+            esac
+          done
+          continue ;;
+      esac
+    fi
+    if [ -z "$SSH_HOST" ]; then SSH_HOST=$tok; continue; fi
+    opts=0
+    unquote "$tok"
+    REMOTE_CMD="${REMOTE_CMD:+$REMOTE_CMD }$UNQUOTED"
+  done
+}
+
+# ssh runs its command on another host: put that command through the whole
+# guard, so ssh cannot carry what the guard denies here.
+inspect_remote() {
+  local reason
+  remote_command_of
+  [ -n "$REMOTE_CMD" ] && [ "$SCRIPT_DEPTH" -lt "$MAX_SCRIPT_DEPTH" ] || return 0
+  reason=$(jq -nc --arg c "$REMOTE_CMD" --arg d "$RUN_DIR" '{tool_input:{command:$c},cwd:$d}' |
+    GUARD_SCRIPT_DEPTH=$((SCRIPT_DEPTH+1)) GUARD_IN_SCRIPT=$IN_SCRIPT GUARD_REMOTE=1 \
+      /bin/bash "$HOOK_DIR/deny-dangerous.sh" 2>&1 >/dev/null)
+  if [ $? -eq 2 ]; then
+    echo "Blocked by the command guard: the command ssh runs on $SSH_HOST is one the guard denies. $reason" >&2
     exit 2
   fi
 }
@@ -452,8 +546,8 @@ RUN_DIR=${RUN_DIR:-$PWD}
 # With an exempt segment present, the denylist sees the other segments only,
 # one per line, so a delete of anything else in the same command still matches.
 # Otherwise it sees the whole command line minus data-only heredoc bodies.
-DENY_CMD=$(strip_heredocs "$CMD" "$WRAPPERS $INTERPRETERS")
-[ "$SCRIPT_DEPTH" -gt 0 ] && DENY_CMD=$(drop_data_quotes "$DENY_CMD")
+DENY_CMD=$(strip_heredocs "$CMD" "$HEREDOC_SHELLS $INTERPRETERS")
+[ "$IN_SCRIPT" = 1 ] && DENY_CMD=$(drop_data_quotes "$DENY_CMD")
 exempt=0
 rest=""
 while IFS= read -r segment; do
@@ -526,8 +620,15 @@ while IFS= read -r segment; do
   [ -z "$command" ] && continue
   cd_target
 
-  script_of
-  [ -n "$SCRIPT" ] && inspect_script "$SCRIPT" "$RUN_DIR"
+  if [ "$command" = ssh ]; then
+    inspect_remote
+    continue
+  fi
+
+  if [ "$REMOTE" = 0 ]; then
+    script_of
+    [ -n "$SCRIPT" ] && inspect_script "$SCRIPT" "$RUN_DIR"
+  fi
 
   # A wrapper hides its payload from us, so any mention of a guarded CLI is enough.
   case "$WRAPPERS" in
