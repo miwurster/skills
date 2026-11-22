@@ -1,7 +1,7 @@
 # command guard — dangerous-command denylist.
 # One POSIX-ERE regex (grep -E) per line. Blank lines and # comments are ignored.
-# Allow by default, deny the irreversible. Taken from davidondrej/skills and kept
-# comparable to it, so upstream updates stay a cheap diff; groups 11 and 12 are ours.
+# Allow by default, deny the irreversible. Taken from davidondrej/skills (MIT, see
+# dangerous-patterns.LICENSE) and kept comparable to it, so upstream updates stay a cheap diff; groups 11 and 12 are ours.
 # After any edit run ./test-guard.sh — it must end "failed: 0".
 # Guarded-CLI reads live in readonly-clis.txt, not here.
 

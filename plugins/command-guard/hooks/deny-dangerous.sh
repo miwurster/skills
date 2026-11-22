@@ -309,7 +309,7 @@ drop_data_quotes() {
 }
 
 # The command line split into the segments stage 2 inspects: heredoc bodies
-# dropped, and separators honoured only outside quotes. Both carry data, not
+# dropped, and separators honored only outside quotes. Both carry data, not
 # commands, so a guarded CLI named there is prose, not an invocation. A wrapper
 # or ssh runs its heredoc, so that body stays visible.
 segments() {
