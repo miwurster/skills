@@ -10,12 +10,25 @@ Each works in any repo, for anyone.
 Commits the current changes with a Conventional Commits message.
 A ticket in the scope is optional.
 
+### `no-comments`
+
+A comment gate: it decides which comments stay, and sweeps files or a diff for the rest.
+A comment that excuses a hack turns into a reshape of the code, and one that guards a rule turns into a test, type or lint rule.
+
+### `test-audit`
+
+A test value gate: each contract keeps one owner test at the strongest boundary.
+It vets every new or changed test, and audits a suite for junk proof and test-only production seams, with an HTML report.
+
+`no-comments` and `test-audit` are adapted from other repos and carry upstream's `LICENSE` in their folder.
+Each one's `README.md` names its source.
+
 ### Install
 
 Install a skill into a project with [`skills`](https://github.com/vercel-labs/skills):
 
 ```sh
-DISABLE_TELEMETRY=1 npx skills add miwurster/skills -a claude-code --copy -s conventional-commit
+DISABLE_TELEMETRY=1 npx skills add miwurster/skills -a claude-code --copy -s conventional-commit -s no-comments -s test-audit
 ```
 
 Commit `.claude/skills/` and `skills-lock.json`.

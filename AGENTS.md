@@ -20,6 +20,11 @@ Everything here is public, so use generic names in skills, plugins and test data
 Upstream owns what vendored material does; we own what it takes to run here.
 Keep `dangerous-patterns.txt` comparable to `davidondrej/skills`: groups 1 to 10 are upstream's, ours start at 11.
 
+## Adapted skills
+
+An adapted skill carries upstream's `LICENSE` with our copyright line added below upstream's, and a `README.md` naming the source path and commit.
+We own its content; upstream is never re-synced.
+
 ## Agent skills
 
 ### Issue tracker
