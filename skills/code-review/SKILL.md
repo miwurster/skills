@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: "Review the changes since a fixed point (commit, branch, tag, or merge-base) along four axes: Standards (does the code follow this repo's documented coding standards?), Spec (does the code match what the originating issue/spec asked for?), Correctness (does it behave right?), and Security (does it open an attack path?). Runs every axis in a parallel sub-agent and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\"."
+description: "Review the changes since a fixed point (commit, branch, tag, or merge-base) along four axes: Standards (does the code follow this repo's documented coding standards?), Spec (does the code match what the originating issue/spec asked for?), Correctness (does it behave right?), and Security (does it open an attack path?). Runs every axis in a parallel sub-agent, verifies every finding with an independent one, and reports the axes side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\"."
 ---
 
 Four-axis review of the diff between `HEAD` and a fixed point:
@@ -10,7 +10,8 @@ Four-axis review of the diff between `HEAD` and a fixed point:
 - **Correctness**: does the changed code behave right, at its edges and under load?
 - **Security**: does the change introduce or widen an exploitable vulnerability?
 
-Each axis runs as a **parallel sub-agent** with a fresh context window, so the axes don't pollute each other, then this skill aggregates their findings.
+Each axis runs as a **parallel sub-agent** with a fresh context window, so the axes don't pollute each other.
+A fresh **verifier** per axis then tries to refute that axis's findings, and this skill aggregates the verified findings.
 The review is a report: it fixes nothing, and it runs to the end without asking, so a caller can act on the findings.
 
 ## Process
@@ -47,13 +48,32 @@ Each prompt carries:
 
 Every axis reports in the format of [findings.md](findings.md); the axis file says so, and the prompt does not restate it.
 
-### 4. Aggregate
+### 4. Verify
 
-Present the reports under `## Standards`, `## Spec`, `## Correctness` and `## Security`, verbatim or lightly cleaned.
-Do **not** merge or rerank findings, because the axes are deliberately separate (see _Why separate axes_).
+An axis checks its findings against its own reading of the code, so it can confirm its own error.
+For every axis that reported findings, spawn one **verifier** sub-agent with a fresh context; issue them all together, in the foreground.
+Each prompt carries:
 
-End with a one-line summary: total findings per axis, and the worst issue _within each axis_ (if any).
-Don't pick a single winner across axes: that's the reranking the separation exists to prevent.
+- The absolute path of [verify.md](verify.md), with the instruction to read it and apply it as the complete brief.
+- The fixed point.
+- That axis's findings, every field as the axis wrote it.
+- For **Spec** findings, the spec as step 3 passed it.
+
+The commit list and the rest of the axis report stay out of the prompt, so the verifier judges the code rather than the stated intent.
+
+The step is done when every finding carries a Status.
+
+### 5. Aggregate
+
+Present the verified reports under `## Standards`, `## Spec`, `## Correctness` and `## Security`.
+Within each, list the `confirmed` and `unresolved` findings with Status and Basis, ordered by the verifier's severity where it set one, else the axis's.
+Then list the `refuted` ones under `Refuted`, each as its Claim and Basis, so the reader can overrule a verifier.
+Keep each axis's findings in its own section, because the axes are deliberately separate (see _Why separate axes_).
+
+Before reporting, run `git -C <repo> worktree prune` and remove any worktree under the temp directory that this review created.
+
+End with a one-line summary: per axis, the count of `confirmed`, `unresolved` and `refuted` findings, and the worst `confirmed` and worst `unresolved` finding _within each axis_ (if any).
+The summary names a worst finding per axis, never one across axes: that's the reranking the separation exists to prevent.
 
 ## Why separate axes
 

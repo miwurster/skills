@@ -16,4 +16,4 @@ Quote the spec line in every finding's **Claim** or **Evidence**.
 
 ## Done
 
-Every requirement in the spec is accounted for as met or as a finding, and every changed file has been checked for behavior the spec did not ask for.
+Every requirement in the spec is accounted for as met or as a finding, every changed file has been checked for behavior the spec did not ask for, and the findings meet the done rule of [findings.md](findings.md).

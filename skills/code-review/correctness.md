@@ -34,8 +34,9 @@ This axis asks one question: given what the code is meant to do, does it behave?
    Open the code you depend on; a claim that rests on "if the other side handles it" is unfinished research.
 3. Run every hunt against each traced path.
 4. Report a finding only once it is traced end to end and you can name the input that triggers it.
+5. Run an executed check on that input, as [findings.md](findings.md) describes; red keeps the finding, green drops or rewrites it.
 
-The step is done when every changed function or code path is traced.
+The step is done when every changed function or code path is traced, and the findings meet the done rule of findings.md.
 End the report with one line, `Traced:`, listing each traced function or path, so a gap is visible to the reader.
 
 ## False positives

@@ -18,8 +18,9 @@ Report every finding in the format of [findings.md](findings.md).
 1. **Context**: find the repo's existing security frameworks, validation and sanitization patterns, and trust boundaries: where untrusted input enters and which operations are sensitive.
 2. **Comparison**: hold each changed file against that context, and mark every deviation from an established pattern and every new attack surface as a lead.
 3. **Assessment**: trace each lead from untrusted input to sensitive operation, through every check on the path.
+4. **Demonstration**: prove each attack path with an executed check, as [findings.md](findings.md) describes: a test that feeds the payload at the entry point and goes red when it reaches the sink.
 
-Done when every changed file has passed all three steps and every lead is either a finding or dropped with its reason.
+Done when every changed file has passed the first three steps, every lead is either a finding or dropped with its reason, and the findings meet the done rule of findings.md.
 A finding's Evidence names the attack path: the entry point, each hop, and the sink, each at `file:line`.
 
 ## Hunts
