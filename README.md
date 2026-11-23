@@ -48,9 +48,20 @@ It needs `jq`; without it every command passes.
 
 - It denies the irreversible: `rm -rf /`, `dd`, `git push --force`, `gh` and `glab repo delete`, and credential reads.
 - It allows only reads for `kubectl`, `gcloud`, `aws`, `terraform`, `terragrunt`, `helm` and `stripe`.
-  For any other command of theirs, it tells the agent to hand the exact command to you, so you can run it yourself with `! <command>`.
 - It denies any command that Claude Code's own parser cannot check.
-- It reads a shell script the command runs, such as `bash deploy.sh` or `./deploy.sh`, and applies the first two rules to it.
+- It reads a shell script the command runs, such as `bash deploy.sh` or `./deploy.sh`, and the command `ssh` runs remotely, and applies the first two rules to them.
+
+A blocked command ends in one of two ways:
+
+- **Rewrite**: for a command Claude Code cannot parse, or a loop polling a background task, the guard names the alternative and the agent goes on.
+- **Hand over**: for a denylist match or a command outside the read allowlist, the guard shows you `! <command>` and the agent ends its turn, so you can run it yourself.
+  For a blocked script or `ssh` command, that is the command the agent ran, such as `bash deploy.sh prod`.
+  A subagent puts the command in its final report under "Hand over" instead.
+
+A credential read, one of the denylist patterns that `credential-patterns.txt` lists, is never handed over, since running it would put the secret into the conversation.
+The agent explains the block and ends its turn.
+
+When the guard blocks a read of a guarded CLI, add one line to `plugins/command-guard/hooks/readonly-clis.txt`, add a `check allow` case to `test-guard.sh`, and sync the plugin again.
 
 ### `mermaid`
 

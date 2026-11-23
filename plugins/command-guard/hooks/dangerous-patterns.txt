@@ -4,6 +4,8 @@
 # dangerous-patterns.LICENSE) and kept comparable to it, so upstream updates stay a cheap diff; groups 11 and 12 are ours.
 # After any edit run ./test-guard.sh — it must end "failed: 0".
 # Guarded-CLI reads live in readonly-clis.txt, not here.
+# A match is handed over to the user to run, except a credential read, which
+# credential-patterns.txt names by copying its line from here.
 
 # 1. rm aimed at root, the whole home folder, or the whole /Users tree
 (^|[;&|[:space:]])rm[[:space:]]+((-[a-zA-Z]+|--[a-z-]+)[[:space:]]+)*["']?/["']?[[:space:]]*($|[;&|])
@@ -83,6 +85,11 @@
 (^|[;&|[:space:]])aws[[:space:]]([^;&|]*[[:space:]])?lightsail[[:space:]]+get-instance-access-details([[:space:]]|$)
 (^|[;&|[:space:]])aws[[:space:]]([^;&|]*[[:space:]])?--debug([[:space:]]|$)
 (^|[;&|[:space:]])gcloud[[:space:]][^;&|]*[[:space:]]get-credentials([[:space:]]|$)
+# The read allowlist refuses these as non-reads, which would hand them over.
+(^|[;&|[:space:]])gcloud[[:space:]][^;&|]*[[:space:]]print-(access|identity)-token([[:space:]]|$)
+(^|[;&|[:space:]])gcloud[[:space:]]([^;&|]*[[:space:]])?secrets[[:space:]]+versions[[:space:]]+access([[:space:]]|$)
+(^|[;&|[:space:]])aws[[:space:]]([^;&|]*[[:space:]])?configure[[:space:]]+(get[[:space:]][^;&|]*(secret|token)|export-credentials)
+(^|[;&|[:space:]])aws[[:space:]]([^;&|]*[[:space:]])?sts[[:space:]]+assume-role[a-z-]*([[:space:]]|$)
 
 # 13. Rules 6 and 6b again for git with global options before the verb
 # (git -C <path> push, git -c k=v push), which the upstream patterns miss.

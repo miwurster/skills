@@ -6,6 +6,7 @@
 #                      irreversible (rm -rf /, dd, git push --force, gh/glab
 #                      repo delete, keychain and password-manager access,
 #                      cloud reads that hand over a credential).
+#                      credential-patterns.txt names the ones that read a secret.
 #   2. Read allowlist  readonly-clis.txt — for a guarded CLI (each one that file
 #                      names) deny by default and allow only the named reads.
 #   3. Uncheckable     UNCHECKABLE below — deny what Claude Code's own command
@@ -19,8 +20,13 @@
 # models 1 and 2 as well, read from disk, scripts it runs in turn included.
 # So does the command ssh runs on a remote host, as if it ran here.
 #
-# Wired by hooks.json as PreToolUse, matcher Bash. Deny = exit 2 + reason on
-# stderr, which Claude Code shows the agent and blocks the call.
+# Wired by hooks.json as PreToolUse, matcher Bash. A block ends on one of two exits:
+#   rewrite    stage 3 and the poll check: exit 2 + reason on stderr, which names
+#              the alternative; the agent goes on.
+#   hand over  denylist and read allowlist: PreToolUse JSON on stdout, deny, with
+#              the command for the user in systemMessage; the agent hands it over
+#              and ends its turn. A credential read is explained only, never
+#              handed over: running it would put the secret into the conversation.
 #
 # It is a seatbelt against accidents, NOT a sandbox against a malicious agent:
 # variable indirection (K=kubectl; $K apply) and python -c slip past regex.
@@ -35,6 +41,7 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 PATTERNS_FILE="$HOOK_DIR/dangerous-patterns.txt"
 ALLOW_FILE="$HOOK_DIR/readonly-clis.txt"
+CREDENTIALS_FILE="$HOOK_DIR/credential-patterns.txt"
 
 # Used only when ALLOW_FILE cannot be read, so stage 2 still knows what to deny.
 # A copy of the CLIs ALLOW_FILE names; test-guard.sh fails when the two drift.
@@ -94,15 +101,34 @@ VALUE_FLAGS=" $(printf '%s ' $VALUE_FLAGS)"
 # differently (command -p, watch --color), so command_of must not skip past them.
 CLI_VALUE_FLAGS=" -p --color "
 
-deny() {
-  echo "$1 Do not retry it or try to work around the guard; explain the block to the user instead." >&2
-  exit 2
+# Denies the call as PreToolUse JSON: $1 = systemMessage for the user, $2 = reason for the agent.
+deny_json() {
+  jq -nc --arg m "$1" --arg r "$2" \
+    '{systemMessage:$m,hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  exit 0
 }
 
-# A command a guarded CLI refuses may be what the user wants: hand it to them.
+# A nested run (a script, an ssh command) reports to the run above it instead:
+# exit 2 = hand over, exit 3 = explain only, reason on stderr. The top run names
+# the command the agent ran.
 hand_over() {
-  echo "$1 Do not retry it or try to work around the guard. Instead, give the user the exact, complete command in a code block, so they can run it themselves (for example by typing ! followed by the command in the Claude Code prompt), and say in one sentence what it changes." >&2
-  exit 2
+  [ "$SCRIPT_DEPTH" -gt 0 ] && { echo "$1" >&2; exit 2; }
+  deny_json "Command guard blocked this command. To run it yourself: ! $CMD" \
+    "$1 Hand it over: give the user the exact, complete command in a code block, to run themselves by typing ! followed by it in the Claude Code prompt, say in one sentence what it does, and end your turn there. As a subagent, put the command verbatim in your final report under 'Hand over', so the orchestrator passes it on."
+}
+
+explain_only() {
+  [ "$SCRIPT_DEPTH" -gt 0 ] && { echo "$1" >&2; exit 3; }
+  deny_json "Command guard blocked this command: it reads a credential." \
+    "$1 Explain to the user that the guard blocks reading this credential, and end your turn. As a subagent, say so in your final report, so the orchestrator passes it on."
+}
+
+# A nested run's verdict, exit code $1 with reason $2, as this run's own.
+nested_block() {
+  case "$1" in
+    2) hand_over "$2" ;;
+    3) explain_only "$2" ;;
+  esac
 }
 
 # One shell word: a quoted string stays inside its word, quotes kept, so
@@ -446,10 +472,7 @@ inspect_script() {
     jq -Rsc --arg d "$dir" '{tool_input:{command:.},cwd:$d}' |
     GUARD_SCRIPT_DEPTH=$((SCRIPT_DEPTH+1)) GUARD_IN_SCRIPT=1 GUARD_SCRIPT_DIR=$(dirname "$file") \
       /bin/bash "$HOOK_DIR/deny-dangerous.sh" 2>&1 >/dev/null)
-  if [ $? -eq 2 ]; then
-    echo "Blocked by the command guard: the script $path runs a command the guard denies. $reason" >&2
-    exit 2
-  fi
+  nested_block $? "Blocked by the command guard: the script $path runs a command the guard denies. $reason"
 }
 
 # Word $1 with one level of shell quoting removed, in UNQUOTED.
@@ -528,10 +551,7 @@ inspect_remote() {
   reason=$(jq -nc --arg c "$REMOTE_CMD" --arg d "$RUN_DIR" '{tool_input:{command:$c},cwd:$d}' |
     GUARD_SCRIPT_DEPTH=$((SCRIPT_DEPTH+1)) GUARD_IN_SCRIPT=$IN_SCRIPT GUARD_REMOTE=1 \
       /bin/bash "$HOOK_DIR/deny-dangerous.sh" 2>&1 >/dev/null)
-  if [ $? -eq 2 ]; then
-    echo "Blocked by the command guard: the command ssh runs on $SSH_HOST is one the guard denies. $reason" >&2
-    exit 2
-  fi
+  nested_block $? "Blocked by the command guard: the command ssh runs on $SSH_HOST is one the guard denies. $reason"
 }
 
 # The guarded CLIs in CLIS, and the allowlist lines in ALLOW_CLI and ALLOW_RE.
@@ -579,23 +599,35 @@ SEGMENTS
 [ "$exempt" = 1 ] && DENY_CMD=$rest
 
 # --- stage 1: denylist, matched against the command line in DENY_CMD ---------
-# One grep for all patterns; only a hit, or a pattern grep cannot compile, goes
-# through them one by one to name the match.
-if [ -r "$PATTERNS_FILE" ]; then
-  PATTERNS=()
+# The pattern of file $1 that DENY_CMD matches, in MATCHED. One grep for all
+# patterns; only a hit, or a pattern grep cannot compile, goes through them one
+# by one to name the match.
+first_match() {
+  local pattern patterns=()
+  MATCHED=""
+  [ -r "$1" ] || return 1
   while IFS= read -r pattern; do
     case "$pattern" in ''|\#*) continue ;; esac
-    PATTERNS[${#PATTERNS[@]}]=$pattern
-  done < "$PATTERNS_FILE"
-  printf '%s\n' "$DENY_CMD" | grep -qE "${PATTERNS[@]/#/-e}" 2>/dev/null
-  if [ $? -ne 1 ]; then
-    for pattern in "${PATTERNS[@]}"; do
-      if printf '%s\n' "$DENY_CMD" | grep -qE -- "$pattern" 2>/dev/null; then
-        deny "Blocked by the command guard (plugins/command-guard/hooks/dangerous-patterns.txt in miwurster/skills). Matched pattern: $pattern."
-      fi
-    done
-  fi
-fi
+    patterns[${#patterns[@]}]=$pattern
+  done < "$1"
+  [ ${#patterns[@]} -gt 0 ] || return 1
+  printf '%s\n' "$DENY_CMD" | grep -qE "${patterns[@]/#/-e}" 2>/dev/null
+  [ $? -ne 1 ] || return 1
+  for pattern in "${patterns[@]}"; do
+    if printf '%s\n' "$DENY_CMD" | grep -qE -- "$pattern" 2>/dev/null; then
+      MATCHED=$pattern
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Credential reads first, so a command that also matches another pattern is
+# still explained only.
+first_match "$CREDENTIALS_FILE" &&
+  explain_only "Blocked by the command guard: this command reads a credential (pattern $MATCHED in plugins/command-guard/hooks/credential-patterns.txt of miwurster/skills)."
+first_match "$PATTERNS_FILE" &&
+  hand_over "Blocked by the command guard: this command is on the dangerous-command denylist (pattern $MATCHED in plugins/command-guard/hooks/dangerous-patterns.txt of miwurster/skills)."
 
 # --- polling a background task: the harness already notifies on completion ---
 # An until/while loop that sleeps, in a command naming a Claude Code background
@@ -655,7 +687,7 @@ while IFS= read -r segment; do
     *" $command "*)
       for cli in $CLIS; do
         printf '%s\n' "$segment" | grep -qE -- "(^|[^A-Za-z0-9_-])$cli([^A-Za-z0-9_-]|$)" &&
-          hand_over "Blocked by the command guard: a $cli command inside '$command' cannot be inspected, so it is denied. If it is a read, run it directly instead."
+          hand_over "Blocked by the command guard: a $cli command inside '$command' cannot be inspected, so it is denied."
       done
       continue ;;
   esac
@@ -674,7 +706,7 @@ while IFS= read -r segment; do
     done
 
     [ ${#allow[@]} -gt 0 ] && printf '%s\n' "$args" | grep -qE "${allow[@]}" ||
-      hand_over "Blocked by the command guard: only reads are allowed for $cli, and '$cli $args' is not one of them (plugins/command-guard/hooks/readonly-clis.txt in miwurster/skills). If this really is a read, the fix is one line in that file plus a case in test-guard.sh, made there and synced here."
+      hand_over "Blocked by the command guard: only reads are allowed for $cli, and '$cli $args' is not one of them."
   done
 done <<SEGMENTS
 $SEGMENTS
