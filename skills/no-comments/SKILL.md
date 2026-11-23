@@ -24,6 +24,7 @@ Try the categories in this order; the first that fits wins.
 - **Stale**: names code, behavior, or a world that is no longer true.
   It goes.
 - **Keep**: explains behavior forced by something we cannot change (a library, an identity provider, a platform, a protocol, a law) that the code alone would make look wrong, or is a docstring on a public API whose contract says more than the signature.
+  In a tool's config file (a linter, formatter, compiler, or the like), a keep is also the reason, beyond what the setting says, beside each setting that turns a rule off, reconfigures it, or departs from the tool's default.
   It stays, and stands on its own: it names no ADR, ticket, or pull request, and tells no history.
   Where a decision came from belongs in the commit message.
 - **Constraint**: guards a rule the code must keep.
@@ -33,7 +34,7 @@ Try the categories in this order; the first that fits wins.
 - **Excuse**: explains our own code instead of letting the code say it: a hack, a workaround, a "for now", a TODO, a surprise.
   An excuse lets the hack live on and get copied, so the code is reshaped (renamed, extracted, typed, or fixed) until it needs no excuse.
   A fix too big for the change becomes an issue.
-- **Tautology**: repeats what the code already says.
+- **Tautology**: repeats what the code already says, as a config reason that only restates its setting does.
   It goes.
 
 ## Sweep
@@ -44,11 +45,11 @@ Scope is the files or diff the user names; otherwise the diff against `main`, wo
    Dispatch a subagent with the scope and this file's path, and have it categorize every comment in scope.
    It leaves keeps, constraints, and directives that stay in place.
    It deletes every other comment, marks the symbol behind every excuse and every dropped correctness suppression `RESHAPE`, and edits nothing but comments.
-   It reports per file each comment's category: keeps with the forced behavior each names, `RESHAPE` flags with the excuse in one line, constraints with the rule each guards, and the why each decision record carried.
+   It reports per file each comment's category: keeps with the forced behavior or setting each names, `RESHAPE` flags with the excuse in one line, constraints with the rule each guards, and the why each decision record carried.
    Done when every comment in scope has a category.
 2. **Verify** the report against its diff.
    Revert any edit outside comments or outside scope.
-   A keep survives only with proof that its forced behavior is true today on a live path: trace the named call, or read its history (`git log -S`, `git blame`, the pull request).
+   A keep survives only with proof that its forced behavior or setting's reason is true today on a live path: trace the named call, or read its history (`git log -S`, `git blame`, the pull request).
    A keep that stays unproven is stale and goes.
    Restore a deleted comment only when it meets a keep exactly.
    Check every decision record's why against the repo's ADRs, and note each one no ADR covers.
