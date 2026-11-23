@@ -1,3 +1,8 @@
+<!--
+Derived from the ideas of captivus/agent-review `SKILL.md` at 031841cb9e2d3403546d5e5b56cd877c51d86006, written fresh, not tracked.
+MIT, see LICENSE-agent-review.
+-->
+
 # Verify
 
 Try to refute each finding you were given, against the code as it stands at `HEAD`.
