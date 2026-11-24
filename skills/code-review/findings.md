@@ -46,6 +46,8 @@ Run it in a throwaway worktree, so the checkout under review stays as it stands:
 2. Write the check by absolute path under `$tmp`, and run it with `$tmp` as the working directory, with the repo's own test runner where one fits.
 3. `git -C <repo> worktree remove --force "$tmp"`, whatever the outcome.
 
+Read another revision with `git show <rev>:<path>`, or check it out in the throwaway worktree.
+
 The check observes the defect without causing harm: a payload writes only a marker under `$tmp`.
 A check stays **unrun** when it needs secrets, a network target, a service the repo cannot start locally, or would write outside `$tmp` (a database, the home directory); its finding stays `inferred`, and its Evidence says why.
 
