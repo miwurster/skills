@@ -2,7 +2,8 @@
 # Test harness for the command guard.
 # Runs commands through deny-dangerous.sh in the Claude Code payload shape and
 # asserts how each one ends: allow, rewrite (exit 2), handover (deny JSON whose
-# systemMessage carries the command) or secret (deny JSON that leaves it out).
+# systemMessage carries the command), handover-hint (the same, plus the hint to
+# write out a shell expansion) or secret (deny JSON that leaves it out).
 # Run it after ANY edit to dangerous-patterns.txt, credential-patterns.txt or
 # readonly-clis.txt. Must end "failed: 0".
 #   bash plugins/command-guard/hooks/test-guard.sh
@@ -16,7 +17,7 @@ trap 'rm -rf "$work"' EXIT
 mkdir "$work/results"
 
 # Records a case; run_checks runs them all in parallel once every script exists.
-check() { # $1 = expected: allow|rewrite|handover|secret, $2 = command string, $3 = cwd (default /tmp)
+check() { # $1 = expected: allow|rewrite|handover|handover-hint|secret, $2 = command string, $3 = cwd (default /tmp)
   checks=$((checks+1))
   printf '%s\0%s\0%s\0%s\0' "$checks" "$1" "$2" "${3:-/tmp}" >> "$work/cases"
 }
@@ -35,8 +36,11 @@ run_check() {
     msg=$(jq -r 'select(.hookSpecificOutput.permissionDecision == "deny") | .systemMessage' <<< "$out" 2>/dev/null)
     reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason' <<< "$out" 2>/dev/null)
     if [ "$msg" = "Command guard blocked this command. To run it yourself: ! $3" ] &&
-       [[ $reason == *"Hand it over:"* ]]; then
+       [[ $reason == *"Hand it over: give the user"* && $reason != *"send it again"* ]]; then
       verdict=handover
+    elif [ "$msg" = "Command guard blocked this command. To run it yourself: ! $3" ] &&
+         [[ $reason == *"with every value written out. Otherwise hand it over. To hand it over: give the user"* ]]; then
+      verdict=handover-hint
     elif [[ $msg == *credential* && $msg != *"$3"* && $reason == *"Explain to the user"* ]]; then
       verdict=secret
     fi
@@ -69,8 +73,8 @@ check handover 'rm -rf /*'
 check handover 'rm -rf ~'
 check handover 'rm -rf ~/'
 check handover 'rm -rf ~/*'
-check handover 'rm -rf $HOME'
-check handover 'rm -rf "$HOME"'
+check handover-hint 'rm -rf $HOME'
+check handover-hint 'rm -rf "$HOME"'
 check handover 'rm -rf /Users'
 check handover 'rm --recursive --force /'
 check handover 'cd /tmp && rm -rf ~'
@@ -119,7 +123,11 @@ check handover 'git push origin --delete dependabot-a-1.0; git push origin --del
 check handover 'git push origin --delete dependabot-a-1.0 && git push origin --delete dependabot-a-1.0 main'
 check handover 'git push origin --delete dependabot-a-1.0 && rm -rf ~'
 check handover 'git push --force origin --delete dependabot-a-1.0'
-check handover 'git push origin --delete dependabot-$BRANCH'
+check handover-hint 'git push origin --delete dependabot-$BRANCH'
+check handover-hint 'git push origin --delete $br'
+check handover-hint 'git push origin --delete $(git branch -r)'
+check handover 'git push origin --delete foo'
+check allow 'git push origin --delete dependabot-npm_and_yarn-vue-3.5.46'
 check handover 'git push origin --delete --tags dependabot-a-1.0'
 check handover 'git -c remote.origin.url=evil push origin --delete dependabot-a-1.0'
 check handover 'git -C ../repo -c remote.origin.url=evil push origin --delete dependabot-a-1.0'
@@ -433,7 +441,7 @@ check handover 'gcloud storage rm gs://bucket/x'
 check handover 'gcloud storage cp ./x gs://bucket/'
 check handover 'gcloud pubsub schemas create order --type=avro --definition-file=order.avsc'
 check handover 'gcloud pubsub schemas delete order'
-check handover 'for f in a b; do kubectl delete pod $f; done'
+check handover-hint 'for f in a b; do kubectl delete pod $f; done'
 check handover 'if true; then terraform apply; fi'
 check handover 'exec kubectl delete pod web'
 check handover 'helm push loki-1.0.0.tgz oci://registry.example.com/charts'
@@ -520,7 +528,7 @@ check handover 'bash -c "kubectl delete pod web"'
 check handover 'sh -c "terraform apply"'
 check handover 'eval "kubectl apply -f x.yaml"'
 check handover 'kubectl get pods -o name | xargs kubectl delete pod'
-check handover 'echo $(kubectl delete pod web)'
+check handover-hint 'echo $(kubectl delete pod web)'
 check handover 'nohup terraform apply &'
 check handover 'sudo kubectl apply -f x.yaml'
 check handover 'KUBECONFIG=/tmp/kc kubectl delete pod web'

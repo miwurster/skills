@@ -111,10 +111,17 @@ deny_json() {
 # A nested run (a script, an ssh command) reports to the run above it instead:
 # exit 2 = hand over, exit 3 = explain only, reason on stderr. The top run names
 # the command the agent ran.
+# The guard sees the command before the shell expands it, so a command with an
+# expansion may be one an exemption passes once its values are written out.
+EXPANSION_RE='\$[A-Za-z0-9_{(@*#?!]|`'
+EXPANSION_HINT='The guard checks the command before the shell expands it, so it cannot see what `$…` or `$(…)` stand for. If the command falls under one of the guard'\''s exemptions, send it again with every value written out. Otherwise hand it over.'
+
 hand_over() {
+  local lead="Hand it over:"
   [ "$SCRIPT_DEPTH" -gt 0 ] && { echo "$1" >&2; exit 2; }
+  [[ $CMD =~ $EXPANSION_RE ]] && lead="$EXPANSION_HINT To hand it over:"
   deny_json "Command guard blocked this command. To run it yourself: ! $CMD" \
-    "$1 Hand it over: give the user the exact, complete command in a code block, to run themselves by typing ! followed by it in the Claude Code prompt, say in one sentence what it does, and end your turn there. As a subagent, put the command verbatim in your final report under 'Hand over', so the orchestrator passes it on."
+    "$1 $lead give the user the exact, complete command in a code block, to run themselves by typing ! followed by it in the Claude Code prompt, say in one sentence what it does, and end your turn there. As a subagent, put the command verbatim in your final report under 'Hand over', so the orchestrator passes it on."
 }
 
 explain_only() {
