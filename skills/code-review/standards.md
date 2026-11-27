@@ -37,6 +37,14 @@ Each smell reads _what it is_ → _how to fix_; match it against the diff:
 - **Middle Man**: a class or function that mostly just delegates onward. → cut it, call the real target direct.
 - **Refused Bequest**: a subclass or implementer that ignores or overrides most of what it inherits. → drop the inheritance, use composition.
 
+## Comment baseline
+
+Beside the smell baseline, this axis always applies the **Categories** section of the `no-comments` skill to every comment the diff adds or changes.
+**The repo overrides**, as for smells.
+
+A comment finding is `read` and cites its category in **Rule**, for example `no-comments` Tautology.
+It is `minor`; an Excuse, or a suppression of a rule that guards correctness or safety, is `major`.
+
 ## Done
 
-Every changed file has been checked against every documented standard and every smell, and every finding cites `file:line`.
+Every changed file has been checked against every documented standard and every smell, every comment the diff adds or changes has its category, and every finding cites `file:line`.

@@ -24,7 +24,7 @@ This axis asks one question: given what the code is meant to do, does it behave?
 - **Ripple**: a change in one module that breaks a caller elsewhere; follow every cross-module dependency the change touches.
 - **Breaking changes**: altered signatures, API responses, schemas, migrations, serialized formats, config keys, environment variables, ports, or a new manual setup step that existing callers or developers will trip over.
 - **Gate leaks**: behavior meant to sit behind a feature flag that becomes reachable without it.
-- **Tests**: changed behavior with no test that exercises it, and tests that cannot fail because they assert nothing, mock the unit under test, or assert what the code returns rather than what it should.
+- **Tests**: changed behavior with no test that exercises it, and every new or changed test that fails the **Authoring gate** or matches the **Junk patterns** sections of the `test-audit` skill.
 - **Scale**: N+1 queries, unbounded fetches, loops or retries, and work whose cost grows with data the author tested small.
 
 ## Method
@@ -49,9 +49,13 @@ End the report with one line, `Traced:`, listing each traced function or path, s
 ## Severity
 
 - `blocker`: a traced input breaks behavior, corrupts or loses data, or breaks a caller, API, schema or config on landing.
-- `major`: a defect on a realistic but narrower path, a missing test for changed behavior, or a scale cost that will bite at production volume.
-- `minor`: a narrow edge case, or a test that could be sharper.
+- `major`: a defect on a realistic but narrower path, a missing test for changed behavior, a test that leaves the changed behavior unproven, or a scale cost that will bite at production volume.
+  A test leaves it unproven when it fails authoring gate question 1 or 2, a mock supplies the behavior under assertion, or it needs a test-only production seam.
+- `minor`: a narrow edge case, or a test that duplicates another test's proof or carries a misleading name.
+
+A test finding is `read`.
 
 ## Rule
 
-A correctness finding usually cites no rule: a bug leaves Rule out.
+A bug leaves Rule out.
+A test finding cites the authoring gate question or junk pattern it fails, for example `test-audit` Junk patterns: test-only production seams.
